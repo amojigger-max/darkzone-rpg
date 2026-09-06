@@ -27,7 +27,9 @@ def _news(w) -> str | None:
     if random.random() > 0.18:          # هر تیک ۶۰ ثانیه → ~۱۰ دقیقه یک خبر
         return None
     tpl, key = random.choice(NEWS_TMPL)
-    return tpl.format(dollar=w["dollar"], oil=w["oil"], inf=w["inflation"] * 100)
+    import texts
+    return texts.fa(tpl.format(dollar=w["dollar"], oil=w["oil"],
+                               inf=w["inflation"] * 100))
 
 _last = {}
 
@@ -73,10 +75,11 @@ async def world_loop(bot: Bot):
                 gid = db.kv_get("main_group")
                 if gid:
                     with contextlib.suppress(Exception):
+                        import texts as _t
                         await bot.send_message(
                             int(gid),
-                            f"📊 خبرگزاری: تورم جهانی به {w['inflation'] * 100:.0f}٪ رسید — "
-                            f"دلار ×{w['dollar']:.2f} · نفت ${w['oil']:.0f}",
+                            _t.fa(f"📊 خبرگزاری: تورم جهانی به {w['inflation'] * 100:.0f}٪ رسید — "
+                                  f"دلار ×{w['dollar']:.2f} · نفت ${w['oil']:.0f}"),
                             parse_mode="HTML")
             await asyncio.sleep(60)
         except Exception:

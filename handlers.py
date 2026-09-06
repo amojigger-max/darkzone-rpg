@@ -464,7 +464,7 @@ async def cb_buy(c: CallbackQuery):
     p = state.get(uid)
     price = economy.real_price(it[5])
     if p and p["money"] < price:
-        await c.answer(f"💰 پول کم — {price:,} لازم است", show_alert=True)
+        await c.answer(f"💰 پول کم — {texts.fa(price)} لازم است", show_alert=True)
         return
     if not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
         db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))

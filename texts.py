@@ -9,8 +9,17 @@ STARS = "⋆ ⋆ ⋆"
 DOUBLE = "▰" * 22
 
 
+FA_MAP = str.maketrans("0123456789,.", "۰۱۲۳۴۵۶۷۸۹٬٫")
+
+
+def fa(x) -> str:
+    """عدد یا رشته → رقم‌های فارسی تمیز: 993599 → ۹۹۳٬۵۹۹"""
+    s = f"{x:,}" if isinstance(x, int) else str(x)
+    return s.translate(FA_MAP)
+
+
 def esc(s) -> str:
-    return html.escape(str(s or ""))
+    return html.escape(str("" if s is None else s))
 
 
 def hdr(title: str, emoji: str = "🌍") -> str:
@@ -19,8 +28,8 @@ def hdr(title: str, emoji: str = "🌍") -> str:
 
 
 def row(label: str, value) -> str:
-    """سطر مشخصات: برچسب — مقدار."""
-    return f"▫️ {label}: <b>{esc(value)}</b>"
+    """سطر مشخصات: برچسب — مقدار (اعداد خودکار فارسی)."""
+    return f"▫️ {label}: <b>{esc(fa(value))}</b>"
 
 
 def mention(uid: int, name: str) -> str:

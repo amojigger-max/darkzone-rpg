@@ -45,12 +45,12 @@ def view(uid) -> str:
     all_done = True
     for g in st["goals"]:
         mark = "✅" if g["done"] >= g["need"] else "⏳"
-        lines.append(f"{mark} {g['label']} — {g['done']}/{g['need']}")
+        lines.append(f"{mark} {g['label']} — {texts.fa(g['done'])}/{texts.fa(g['need'])}")
         if g["done"] < g["need"]:
             all_done = False
     if all_done:
         total = sum(g["prize"] for g in st["goals"])
-        lines.append(f"🎁 آماده! «جایزه» → 💰 {total:,}")
+        lines.append(f"🎁 آماده! «جایزه» → 💰 {texts.fa(total)}")
     return "\n".join(lines)
 
 
@@ -75,5 +75,5 @@ def claim(uid) -> str:
     db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (total, uid))
     state.gain_xp(uid, total // 3)
-    return (f"🎁 جایزه‌ی مأموریت: 💰 {total:,}\n"
-            f"خزانه: {state.get(uid)['money']:,}")
+    return (f"🎁 جایزه‌ی مأموریت: 💰 {texts.fa(total)}\n"
+            f"خزانه: {texts.fa(state.get(uid)['money'])}")

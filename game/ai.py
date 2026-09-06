@@ -109,8 +109,9 @@ def tick() -> list:
     # ۳) خبر اقتصادی مستقل
     if random.random() < 0.25:
         w = economy.world()
-        out.append(f"📡 بازار: نفت ${w['oil']:.0f} · دلار ×{w['dollar']:.2f} · "
-                   f"تورم {w['inflation'] * 100:.1f}٪")
+        oil, usd, inf = w["oil"], w["dollar"], w["inflation"] * 100
+        out.append(f"📡 بازار: نفت ${texts.fa(f'{oil:.0f}')} · "
+                   f"دلار ×{texts.fa(f'{usd:.2f}')} · تورم {texts.fa(f'{inf:.1f}')}٪")
     for line in out:
         news_add(line)
     return out
@@ -141,7 +142,7 @@ def respond_to_strike(attacker: str, defender: str, kind: str, hit: int) -> list
         col = "score_a" if w["a"] == defender else "score_b"
         gain = random.randint(2, 5) + dc["mil"] // 2
         db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (gain, w["id"]))
-        out.append(f"⚠️ پاسخ سریع {dc['name']}! جبهه +{gain} برای دشمن")
+        out.append(f"⚠️ پاسخ سریع {dc['name']}! جبهه +{texts.fa(gain)} برای دشمن")
     # فرسایش سپر مهاجم با آتش متقابل
     layer = defense.KIND_LAYER.get(kind, "دفاع زمینی")
     if random.random() < 0.5:

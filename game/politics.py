@@ -30,7 +30,7 @@ def found(uid, name: str, ideology: str) -> str:
     if len(name) < 3 or len(name) > 28:
         return "⛔ نام حزب: ۳ تا ۲۸ حرف."
     if p["money"] < PARTY_COST:
-        return f"💰 تأسیس حزب {PARTY_COST:,} می‌ارزد — داری: {p['money']:,}"
+        return f"💰 تأسیس حزب {texts.fa(PARTY_COST)} می‌ارزد — داری: {texts.fa(p['money'])}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (PARTY_COST, uid))
     db.ex("INSERT INTO parties(name,country,ideology,leader_uid,members,power,created) "
           "VALUES(?,?,?,?,1,10,?)", (texts.esc(name), p["country"],

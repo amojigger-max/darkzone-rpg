@@ -65,24 +65,21 @@ def card(uid) -> str:
     import game.military as mil
     from game import politics
     party = politics.my_party(uid)
+    spec, pct, sname = countries.spec_of(p["country"])
     return "\n".join([
         t.hdr("پرونده‌ی نظامی", "🎖"),
-        t.STARS,
         t.row("نام", p["name"]),
         t.row("کشور", f"{c.get('flag','')} {c.get('name','—')}"),
-        t.row("تخصص", f"🎖 {countries.spec_of(p['country'])[2]} — "
-                      f"+{countries.spec_of(p['country'])[1]}٪ {countries.spec_of(p['country'])[0]}"),
+        t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
         t.row("درجه", countries.rank_name(p["level"])),
-        t.row("سطح / تجربه", f"{p['level']} · {p['xp']}/{xp_need(p['level'])}"),
-        t.row("خزانه", f"💰 {p['money']:,}"),
-        t.row("جان", f"❤️ {p['hp']}/{p['max_hp']}"),
-        t.row("کشته‌ها", p["kills"]),
-        t.row("عملیات جاسوسی", p["spy_ops"]),
+        t.row("سطح", f"{t.fa(p['level'])} · تجربه {t.fa(p['xp'])}/{t.fa(xp_need(p['level']))}"),
+        t.row("خزانه", f"💰 {t.fa(p['money'])}"),
+        t.row("جان", f"❤️ {t.fa(p['hp'])}/{t.fa(p['max_hp'])}"),
+        t.row("سوابق", f"⚔️ {t.fa(p['kills'])} کشته · 🕵 {t.fa(p['spy_ops'])} جاسوسی"),
         t.row("حزب", party["name"] if party else "—"),
         t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else ("عضو حزب" if party else "شهروند")),
-        medals(uid),
-    ])
+    ] + ([medals(uid)] if medals(uid) else []))
 
 
 def medals(uid) -> str:
@@ -128,6 +125,6 @@ def ration(uid) -> str:
     bonus = ""
     if streak >= 3 and _r.random() < 0.35:
         bonus = "\n🎁 صندوق ویژه‌ی حضور: یک تجهیز رایگان شانس داشت! (بگذار شانس بسنجد)"
-    return (f"🍞 جیره‌ی روزانه: 💰 +{amount:,}\n"
-            f"🔥 زنجیره‌ی حضور: {streak} روز پیوسته\n"
-            f"خزانه: {get(uid)['money']:,}{bonus}")
+    return (f"🍞 جیره‌ی روزانه: 💰 +{texts.fa(amount)}\n"
+            f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"
+            f"خزانه: {texts.fa(get(uid)['money'])}{bonus}")

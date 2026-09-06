@@ -9,12 +9,15 @@ from game import state
 
 def branch_name(p) -> str:
     c = countries.COUNTRIES.get(p["country"])
-    if not c or not p["branch"]:
+    if not c or p["branch"] in (None, ""):
         return ""
-    try:
-        return c["branches"][p["branch"]]
-    except Exception:
-        return ""
+    b = p["branch"]
+    if isinstance(b, int) or (isinstance(b, str) and b.isdigit()):
+        try:
+            return c["branches"][int(b)]
+        except Exception:
+            return ""
+    return b if b in c["branches"] else ""
 
 
 def join_branch(uid, idx: int) -> str:
@@ -51,7 +54,7 @@ def arsenal(uid) -> str:
         nm, em, _, atk, guard, price, _ = (None,) * 7
         it = countries.ITEMS[iid]
         own = db.one("SELECT qty,dur FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = f"✅ (دوام {own['dur']}٪)" if own else f"💰 {it[5]:,}"
+        mark = f"✅ دوام {texts.fa(own['dur'])}٪" if own else f"💰 {texts.fa(it[5])}"
         lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️{it[3]} 🛡{it[4]} · {mark}")
     lines += ["", "خرید: «خرید نام‌تجهیز» · تعمیر: «تعمیر»"]
     return "\n".join(lines)
@@ -67,7 +70,7 @@ def buy(uid, iid: str) -> str:
     if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
         return "✅ از قبل داری."
     if p["money"] < it[5]:
-        return f"💰 پول کم داری — لازم: {it[5]:,} · داری: {p['money']:,}"
+        return f"💰 پول کم داری — لازم: {texts.fa(it[5])} · داری: {texts.fa(p['money'])}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (it[5], uid))
     db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
     from game import quests
@@ -92,7 +95,7 @@ def blackmarket(uid) -> str:
         price = int(economy.real_price(it[5]) * 1.7)
         c = countries.COUNTRIES[it[2]]
         own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = "✅" if own else f"💰{price // 1000}k"
+        mark = "✅" if own else f"💰{texts.fa(price // 1000)}k"
         lines.append(f"{it[1]} {it[0]} ({c['flag']}) — {mark}")
     lines += ["", "خرید: «خریدسیاه نام» — مثال: <code>خریدسیاه f35</code>"]
     return "\n".join(lines)
@@ -110,7 +113,7 @@ def buy_black(uid, iid: str) -> str:
         return "✅ از قبل داری."
     price = int(economy.real_price(it[5]) * 1.7)
     if p["money"] < price:
-        return f"💰 پول کم — لازم: {price:,} · داری: {p['money']:,}"
+        return f"💰 پول کم — لازم: {texts.fa(price)} · داری: {texts.fa(p['money'])}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
     db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
     return f"☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
@@ -134,11 +137,11 @@ def upgrade(uid, iid: str) -> str:
         return "⭐ تجهیز در حداکثر سطح (۳) است."
     cost = int(economy.real_price(it[5]) * 0.6 * lvl)
     if p["money"] < cost:
-        return f"💰 ارتقا {cost:,} می‌ارزد — داری: {p['money']:,}"
+        return f"💰 ارتقا {texts.fa(cost)} می‌ارزد — داری: {texts.fa(p['money'])}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
     db.kv_set(f"itlvl:{uid}:{iid}", str(lvl + 1))
     return (f"⬆️ <b>{it[0]}</b> ارتقا یافت به سطح {lvl + 1} — "
-            f"قدرت +{25 * (lvl + 1)}٪\nهزینه: {cost:,}")
+            f"قدرت +{texts.fa(25 * (lvl + 1))}٪\nهزینه: {texts.fa(cost)}")
 
 
 def repair(uid) -> str:
@@ -159,7 +162,7 @@ def repair(uid) -> str:
     if total == 0:
         return "💰 پول تعمیر کافی نیست — «جیره» بگیر یا رزم کن."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (total, uid))
-    return f"🔧 تعمیر کامل انجام شد — هزینه: 💰 {total:,}"
+    return f"🔧 تعمیر کامل انجام شد — هزینه: 💰 {texts.fa(total)}"
 
 
 def loadout(uid):
@@ -212,13 +215,13 @@ def battle(uid, tier: int = None) -> str:
         if crit:
             dmg *= 2
         ehp -= dmg
-        log.append(f"{'🎯 مرگبار! ' if crit else '⚔️ '}{wpn} → −{dmg}")
+        log.append(f"{'🎯 مرگبار! ' if crit else '⚔️ '}{wpn} → −{texts.fa(dmg)}")
         if ehp <= 0:
             break
         edmg = max(3, int(eatk * random.uniform(0.6, 1.1)) - guard // 2)
         db.ex("UPDATE users SET hp=MAX(0,hp-?) WHERE uid=?", (edmg, uid))
         p = state.active(uid)
-        log.append(f"🩸 ضدحمله → −{edmg}")
+        log.append(f"🩸 ضدحمله → −{texts.fa(edmg)}")
     # فرسایش دوام تجهیزات استفاده‌شده
     for r in db.q("SELECT iid FROM inventory WHERE uid=? AND dur>10", (uid,)):
         it = countries.ITEMS[r["iid"]]
@@ -240,7 +243,7 @@ def battle(uid, tier: int = None) -> str:
             t.row("دشمن", name),
             t.row("تخصص", f"🎖 {mname}"), "",
             *log[:6], "",
-            t.row("غنیمت", f"💰 {loot:,} · ⭐ {xp} XP"),
+            t.row("غنیمت", f"💰 {t.fa(loot)} · ⭐ {t.fa(xp)} XP"),
             t.row("جان", f"❤️ {p['hp']}/{p['max_hp']}")])
     db.ex("UPDATE users SET hp=MAX(10,hp) WHERE uid=?", (uid,))
     return "\n".join([

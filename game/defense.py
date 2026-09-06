@@ -90,15 +90,15 @@ def strengthen(uid: int, layer: str) -> str:
     lvl = level(cid, layer)
     cost = 350 + lvl * 9
     if p["money"] < cost:
-        return f"💰 پول کم است — نیاز: {cost:,}"
+        return f"💰 پول کم است — نیاز: {texts.fa(cost)}"
     if lvl >= 95:
         return "🏆 این لایه در اوج است."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
     restore(cid, layer, 3)
     c = countries.COUNTRIES[cid]
     return (f"🛡 {LAYERS[layer]} لایه‌ی <b>{layer}</b> کشور {c['flag']} {c['name']} "
-            f"تقویت شد!\nسطح: {lvl} ← <b>{level(cid, layer)}</b> · 💰 −{cost:,}\n"
-            f"آفرین سرباز — دفاع وطن از تو یاد خواهد کرد.")
+            f"تقویت شد!\nسطح: {texts.fa(lvl)} ← <b>{texts.fa(level(cid, layer))}</b> · "
+            f"💰 −{texts.fa(cost)}")
 
 
 def status(cid: str) -> str:
@@ -114,7 +114,7 @@ def status(cid: str) -> str:
     for r in rows:
         bar = "▰" * (r["level"] // 10) + "▱" * (10 - r["level"] // 10)
         lines.append(f"{LAYERS.get(r['layer'], '▪️')} {r['layer']}: "
-                     f"<b>{r['level']}</b> {bar}")
+                     f"<b>{texts.fa(r['level'])}</b> {bar}")
     lines += ["", "⚡ جنگ الکترونیک آسیبِ ضربه‌های عبوری را کم می‌کند.",
               "➕ تقویت: دکمه‌های زیر یا «تقویت ضد موشک»"]
     return "\n".join(lines)

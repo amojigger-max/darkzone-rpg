@@ -180,7 +180,7 @@ def duel_accept(uid) -> str:
     state.gain_xp(winner["uid"], 150)
     wc = countries.COUNTRIES[winner["country"]]
     lines.append(f"🏆 {wc['flag']} {t.mention(winner['uid'], winner['name'] or 'سرباز')} "
-                 f"پیروز شد! 💰 {prize:,} · ⭐ ۱۵۰ XP")
+                 f"پیروز شد! 💰 {texts.fa(prize)} · ⭐ {texts.fa(150)} XP")
     db.kv_set("duel:last", "")
     return "\n".join(lines)
 
@@ -264,13 +264,13 @@ def front(uid) -> str:
     ammo = int(db.kv_get(_ammo_key(w, cid), "0") or 0)
     lines = [t.hdr("جبهه‌ی جنگ", "🗺"),
              f"{mc['flag']} {mc['name']} ⚔️ {ec['flag']} {ec['name']}",
-             t.row("امتیاز جبهه", f"{mine} : {theirs}"),
-             t.row("زمان مانده", f"{hours} ساعت"),
-             t.row("مهمات کشورت", f"{ammo}/{_ammo_total(cid)}"),
+             t.row("امتیاز جبهه", f"{t.fa(mine)} : {t.fa(theirs)}"),
+             t.row("زمان مانده", f"{t.fa(hours)} ساعت"),
+             t.row("مهمات کشورت", f"{t.fa(ammo)}/{t.fa(_ammo_total(cid))}"),
              "",
              f"🛡 <b>سپر ملی {ec['name']}:</b>"]
     for layer in defense.LAYERS:
-        lines.append(f"▫️ {defense.LAYERS[layer]} {layer}: {defense.level(ecid, layer)}")
+        lines.append(f"▫️ {defense.LAYERS[layer]} {layer}: {t.fa(defense.level(ecid, layer))}")
     occ = geo.occupied(ecid)
     if occ:
         lines += ["", "🚩 اشغال‌های ما: " + " · ".join(occ)]
@@ -306,20 +306,21 @@ def army(uid) -> str:
              t.row("میانگین سپر ملی", f"{davg:.0f}"),
              t.row("نیروی انسانی", manpower)]
     if brs:
-        lines.append("▫️ شاخه‌ها: " + " · ".join(f"{r['branch']} {r['n']}" for r in brs))
+        lines.append("▫️ شاخه‌ها: " + " · ".join(
+            f"{r['branch']} {texts.fa(r['n'])}" for r in brs))
     if economy.sanctioned(cid):
         lines.append("🚫 کشورت تحت تحریم اقتصادی است!")
     w = war_of(cid)
     if w:
         _init_ammo(w)
         ammo = int(db.kv_get(_ammo_key(w, cid), "0") or 0)
-        lines.append(t.row("مهمات جنگ", f"{ammo}/{_ammo_total(cid)}"))
+        lines.append(t.row("مهمات جنگ", f"{t.fa(ammo)}/{t.fa(_ammo_total(cid))}"))
     else:
         lines.append("🕊 کشورت در صلح است.")
     lines += ["", "⚙️ <b>محدودیت‌های کشورت:</b>",
               "▫️ موج حمله: هر ۴۵ ثانیه",
               "▫️ حداکثر شلیک هر موج: ۵",
-              f"▫️ مهمات هر جنگ: {_ammo_total(cid)}",
+              f"▫️ مهمات هر جنگ: {t.fa(_ammo_total(cid))}",
               "▫️ جنگ همزمان: ۱"]
     return "\n".join(lines)
 
@@ -368,7 +369,7 @@ def strike(uid, kind: str, count: int = 1) -> str:
     lines = [t.hdr(f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
                                           "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
              f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}{spec_mark}",
-             f"🛡 {layer} دشمن: سطح {dlevel}",
+             f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}",
              t.K]
     score_add = 0
     for n in range(1, count + 1):
@@ -376,16 +377,16 @@ def strike(uid, kind: str, count: int = 1) -> str:
         dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3) * dmg_mult))
         intercepted = random.random() < chance
         if intercepted:
-            lines.append(f"  {n}. 🛡 دفع شد — پدافند در آسمان نابودش کرد")
+            lines.append(f"  {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")
         else:
-            lines.append(f"  {n}. 💥 برخورد! آسیب {dmg}")
+            lines.append(f"  {texts.fa(n)}. 💥 برخورد! آسیب {texts.fa(dmg)}")
             score_add += 3
         db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
               (random.randint(6, 14), uid, best["iid"]))
     if score_add:
         col = "score_a" if w["a"] == p["country"] else "score_b"
         db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (score_add, w["id"]))
-        lines.append(f"⚔️ امتیاز جبهه: +{score_add}")
+        lines.append(f"⚔️ امتیاز جبهه: +{texts.fa(score_add)}")
         # هر ۵ امتیاز یک شهر می‌افتد
         score = db.one(f"SELECT {col} s FROM wars WHERE id=?", (w["id"],))["s"]
         if score and score % 5 < count:
@@ -399,12 +400,12 @@ def strike(uid, kind: str, count: int = 1) -> str:
     lines.append(f"🛠 دوام {it[0]}: −{str(count * 10).translate(FA_D)}٪")
     # 🎯 مصرف مهمات
     db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
-    lines.append(f"🎯 مهمات کشورت: {ammo - count}/{_ammo_total(p['country'])}")
+    lines.append(f"🎯 مهمات کشورت: {texts.fa(ammo - count)}/{texts.fa(_ammo_total(p['country']))}")
     # ضدحمله‌ی مستقیم به فرمانده
     if random.random() < 0.4 and score_add:
         edmg = random.randint(8, 25)
         db.ex("UPDATE users SET hp=MAX(15,hp-?) WHERE uid=?", (edmg, uid))
-        lines.append(f"⚠️ ضدحمله‌ی {ec['name']}! 🩸 −{edmg}")
+        lines.append(f"⚠️ ضدحمله‌ی {ec['name']}! 🩸 −{texts.fa(edmg)}")
     # 🧠 پاسخ هوشمند جهان — دشمن واقعی جواب می‌دهد
     from game import ai
     for ln in ai.respond_to_strike(p["country"], ecid, kind, score_add):
@@ -425,7 +426,8 @@ def settle():
             db.ex("UPDATE wars SET status='won', winner=? WHERE id=?", (win, w["id"]))
             wc = countries.COUNTRIES[win]
             out.append(f"🏆 {wc['flag']} <b>{wc['name']}</b> پیروز شد "
-                       f"({max(w['score_a'], w['score_b'])}—{min(w['score_a'], w['score_b'])}).")
+                       f"({texts.fa(max(w['score_a'], w['score_b']))}—"
+                       f"{texts.fa(min(w['score_a'], w['score_b']))}).")
             db.ex("DELETE FROM alliances WHERE (a=? AND b=?) OR (a=? AND b=?)",
                   (win, lose, lose, win))
     return out
@@ -455,7 +457,7 @@ def world_status() -> str:
         a, b = countries.COUNTRIES[w["a"]], countries.COUNTRIES[w["b"]]
         left = max(0, w["ends"] - db.now()) // 3600
         lines.append(f"{a['flag']}{a['name']} ⚔️ {b['flag']}{b['name']} — "
-                     f"{w['score_a']}:{w['score_b']} · {left} ساعت")
+                     f"{texts.fa(w['score_a'])}:{texts.fa(w['score_b'])} · {texts.fa(left)} ساعت")
     return "\n".join(lines)
 
 
@@ -467,5 +469,5 @@ def leaderboard() -> str:
         c = countries.COUNTRIES.get(r["country"], {})
         medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
         lines.append(f"{medal} {t.mention(r['uid'], r['name'] or 'سرباز')} — "
-                     f"{c.get('flag', '')} سطح {r['level']} · ⚔️ {r['kills']}")
+                     f"{c.get('flag', '')} سطح {t.fa(r['level'])} · ⚔️ {t.fa(r['kills'])}")
     return "\n".join(lines)

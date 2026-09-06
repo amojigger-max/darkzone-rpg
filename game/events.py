@@ -54,7 +54,7 @@ def claim(chat_id, uid, word) -> str:
     prize = st["prize"]
     if prize:
         db.ex("UPDATE users SET money=money+? WHERE uid=?", (prize, uid))
-        return f"🎁 {texts.mention(uid, p['name'])} برنده شد: 💰 {prize:,}"
+        return f"🎁 {texts.mention(uid, p['name'])} برنده شد: 💰 {texts.fa(prize)}"
     from game import state
     state.gain_xp(uid, 120)
     return f"🎖 {texts.mention(uid, p['name'])} اعزام شد — ⭐ +۱۲۰ XP"
