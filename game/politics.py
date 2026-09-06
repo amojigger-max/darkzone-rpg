@@ -76,7 +76,8 @@ def join(uid, name: str) -> str:
     db.ex("UPDATE users SET party_id=? WHERE uid=?", (party["id"], uid))
     db.ex("UPDATE parties SET members=members+1, power=power+5 WHERE id=?",
           (party["id"],))
-    return f"🏛 به حزب <b>{party['name']}</b> پیوستی.\nقدرت حزب: ⚡ {party['power'] + 5}"
+    return (f"🏛 به حزب <b>{party['name']}</b> پیوستی.\n"
+            f"⚡ قدرت حزب: {texts.fa(party['power'] + 5)}")
 
 
 def statement(uid, body: str) -> str:

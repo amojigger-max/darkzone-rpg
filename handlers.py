@@ -347,19 +347,40 @@ def kb_arsenal(uid) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_targets(uid, action) -> InlineKeyboardMarkup:
-    """لیست کشورها برای جاسوسی/اتحاد/جنگ."""
+def kb_targets(uid, action, page=0) -> InlineKeyboardMarkup:
+    """لیست صفحه‌بندی‌شده‌ی کشورها برای جاسوسی/اتحاد/جنگ/تحریم."""
     p = state.active(uid)
+    own = p["country"] if p else None
+    ids = [cid for cid in countries.COUNTRIES if cid != own]
+    per = 10
+    page = max(0, min(page, (len(ids) - 1) // per))
+    chunk = ids[page * per:(page + 1) * per]
     rows = []
-    chunk = [cid for cid in countries.COUNTRIES if cid != (p["country"] if p else None)]
     for a, b in zip(chunk[::2], chunk[1::2]):
-        rows.append([InlineKeyboardButton(text=countries.COUNTRIES[a]["flag"] + countries.COUNTRIES[a]["name"],
-                                          callback_data=f"{action}:{a}"),
-                     InlineKeyboardButton(text=countries.COUNTRIES[b]["flag"] + countries.COUNTRIES[b]["name"],
-                                          callback_data=f"{action}:{b}")])
+        rows.append([InlineKeyboardButton(
+                         text=countries.COUNTRIES[a]["flag"] + " " + countries.COUNTRIES[a]["name"],
+                         callback_data=f"{action}:{a}"),
+                     InlineKeyboardButton(
+                         text=countries.COUNTRIES[b]["flag"] + " " + countries.COUNTRIES[b]["name"],
+                         callback_data=f"{action}:{b}")])
+    if len(chunk) % 2:
+        rows.append([InlineKeyboardButton(
+            text=countries.COUNTRIES[chunk[-1]]["flag"] + " " + countries.COUNTRIES[chunk[-1]]["name"],
+            callback_data=f"{action}:{chunk[-1]}")])
+    n_pages = max(1, (len(ids) + per - 1) // per)
+    if n_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️ صفحه قبل",
+                                            callback_data=f"tp:{action}:{page-1}"))
+        nav.append(InlineKeyboardButton(text=f"📄 {texts.fa(page+1)}/{texts.fa(n_pages)}",
+                                        callback_data=f"tp:{action}:{page}"))
+        if (page + 1) * per < len(ids):
+            nav.append(InlineKeyboardButton(text="صفحه بعد ▶️",
+                                            callback_data=f"tp:{action}:{page+1}"))
+        rows.append(nav)
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def kb_strikes() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -422,24 +443,8 @@ def kb_surrender() -> InlineKeyboardMarkup:
 
 
 def kb_declare(uid) -> InlineKeyboardMarkup:
-    """⚔️ انتخاب کشور برای اعلام جنگ."""
-    p = state.active(uid)
-    chunk = [cid for cid in countries.COUNTRIES if cid != (p["country"] if p else None)]
-    rows = []
-    for a, b in zip(chunk[::2], chunk[1::2]):
-        rows.append([InlineKeyboardButton(
-                         text=countries.COUNTRIES[a]["flag"] + countries.COUNTRIES[a]["name"],
-                         callback_data=f"dwr:{a}"),
-                     InlineKeyboardButton(
-                         text=countries.COUNTRIES[b]["flag"] + countries.COUNTRIES[b]["name"],
-                         callback_data=f"dwr:{b}")])
-    if len(chunk) % 2:
-        rows.append([InlineKeyboardButton(
-            text=countries.COUNTRIES[chunk[-1]]["flag"] + countries.COUNTRIES[chunk[-1]]["name"],
-            callback_data=f"dwr:{chunk[-1]}")])
-    rows.append([InlineKeyboardButton(text="↩️ دفتر سیاسی", callback_data="mn:pol"),
-                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    """⚔️ انتخاب کشور برای اعلام جنگ — صفحه‌بندی‌شده."""
+    return kb_targets(uid, "dwr")
 
 
 def kb_market() -> InlineKeyboardMarkup:
@@ -460,23 +465,9 @@ def kb_straits() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
-def kb_sanction() -> InlineKeyboardMarkup:
-    chunk = list(countries.COUNTRIES)
-    rows = []
-    for a, b in zip(chunk[::2], chunk[1::2]):
-        rows.append([InlineKeyboardButton(
-                         text=countries.COUNTRIES[a]["flag"] + countries.COUNTRIES[a]["name"],
-                         callback_data=f"snc:{a}"),
-                     InlineKeyboardButton(
-                         text=countries.COUNTRIES[b]["flag"] + countries.COUNTRIES[b]["name"],
-                         callback_data=f"snc:{b}")])
-    if len(chunk) % 2:
-        rows.append([InlineKeyboardButton(
-            text=countries.COUNTRIES[chunk[-1]]["flag"] + countries.COUNTRIES[chunk[-1]]["name"],
-            callback_data=f"snc:{chunk[-1]}")])
-    rows.append([InlineKeyboardButton(text="📈 بازار جهانی", callback_data="mn:market"),
-                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def kb_sanction(uid) -> InlineKeyboardMarkup:
+    """🚫 انتخاب کشور برای تحریم — صفحه‌بندی‌شده."""
+    return kb_targets(uid, "snc")
 
 
 def kb_black(uid) -> InlineKeyboardMarkup:
@@ -664,9 +655,11 @@ async def cb_menu(c: CallbackQuery):
             "⛔ حداقل ۱۰ حرف · ثبت دائمی · ⚡ قدرت حزب +۱۰", "",
             "✋ لغو: بنویس «لغو»"]), kb_cancel_pol())
     elif what == "spy":
-        await _edit(c, texts.hdr("عملیات جاسوسی", "🕵") + "\nکشور هدف:", kb_targets(uid, "spy"))
+        await _edit(c, texts.hdr("عملیات جاسوسی", "🕵") + "\n\nکشور هدف را انتخاب کن:",
+                    kb_targets(uid, "spy"))
     elif what == "ally":
-        await _edit(c, texts.hdr("پیشنهاد اتحاد", "🤝") + "\nبا کدام کشور؟", kb_targets(uid, "ally"))
+        await _edit(c, texts.hdr("پیشنهاد اتحاد", "🤝") + "\n\nبا کدام کشور؟",
+                    kb_targets(uid, "ally"))
     elif what == "war":
         p = state.active(uid)
         if p and war.war_of(p["country"]):
@@ -718,7 +711,8 @@ async def cb_menu(c: CallbackQuery):
                 it = countries.ITEMS[r["iid"]]
                 lvl = military.item_level(uid, r["iid"])
                 rows.append([InlineKeyboardButton(
-                    text=f"{it[1]} {it[0]} — سطح {lvl}" + (" (مکس)" if lvl >= 3 else " ⬆️"),
+                    text=f"{it[1]} {it[0]} — سطح {texts.fa(lvl)}"
+                    + (" (مکس)" if lvl >= 3 else " ⬆️"),
                     callback_data=f"up:{r['iid']}")])
             rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
             await _edit(c, texts.hdr("ارتقای تجهیزات", "⬆️") + "\n\nتجهیزات خودت:",
@@ -866,6 +860,15 @@ async def cb_surrender(c: CallbackQuery):
     await c.answer()
 
 
+@router.callback_query(F.data.startswith("tp:"))
+async def cb_target_page(c: CallbackQuery):
+    """📄 صفحه‌بندی پیکر کشورها — جاسوسی/اتحاد/جنگ/تحریم."""
+    parts = c.data.split(":")
+    action, page = parts[1], (int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0)
+    await c.message.edit_reply_markup(reply_markup=kb_targets(c.from_user.id, action, page))
+    await c.answer()
+
+
 # ═══════════ ⚔️ اعلام جنگ — دکمه‌ای ═══════════
 
 @router.callback_query(F.data.startswith("dwr:"))
@@ -887,7 +890,7 @@ async def cb_sanction(c: CallbackQuery):
         await _edit(c, "\n".join([
             texts.hdr("تحریم اقتصادی", "🚫"), "",
             "کدام کشور؟ — 👑 فقط رهبر:",
-            "تحریم یعنی فروش نفتش نصف می‌شود."]), kb_sanction())
+            "تحریم یعنی فروش نفتش نصف می‌شود."]), kb_sanction(c.from_user.id))
     else:
         await _edit(c, economy.sanction(c.from_user.id, cid), kb_market())
     await c.answer()

@@ -81,7 +81,8 @@ async def cb(uid, data):
           "dwr": handlers.cb_declare_war, "snc": handlers.cb_sanction,
           "str": handlers.cb_strait, "bb": handlers.cb_buy_black,
           "qc": handlers.cb_quest_claim, "pj": handlers.cb_party_join,
-          "pnew": handlers.cb_party_new, "pcancel": handlers.cb_pcancel}[key]
+          "pnew": handlers.cb_party_new, "pcancel": handlers.cb_pcancel,
+          "tp": handlers.cb_target_page}[key]
     try:
         await fn(c)
         return (c.message.out or "") + "|" + (c.answered or "")
@@ -342,6 +343,14 @@ async def main():
     await handlers.fa_words(m_chat)
     T("گفتگوی عادی ساکت", m_chat.out == "", m_chat.out)
     handlers.TEST_MODE = True
+
+    # ═══ v24.4: صفحه‌بندی پیکر کشورها ═══
+    for data in ("tp:spy:1", "tp:spy:2", "tp:ally:3", "tp:dwr:0", "tp:snc:4", "tp:spy:99"):
+        out = await cb(uid, data)
+        T(f"صفحه‌بندی {data}", "CRASH" not in out, out)
+    kb_p = handlers.kb_targets(uid, "spy", 0)
+    n_btns = sum(len(r) for r in kb_p.inline_keyboard)
+    T("پیکر ≤۱۴ دکمه", n_btns <= 14, n_btns)   # ۱۰ کشور + ناوبری + منو
 
     # ═══ v24.3: ارتقا +۲۵٪ واقعی · جایزه‌ی رویداد صادق ═══
     from game import events as _ev
