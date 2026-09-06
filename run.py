@@ -53,7 +53,6 @@ async def world_loop(bot: Bot):
                 if not events.game_alive(g):
                     continue                     # گروه خفته — جهانش هم می‌خوابد
                 w = economy.tick()
-                economy.oil_income()
                 economy.world()
                 news = _news(w)
                 if news:

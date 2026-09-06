@@ -88,7 +88,7 @@ def strengthen(uid: int, layer: str) -> str:
         return "⛔ لایه نامعتبر."
     cid = p["country"]
     lvl = level(cid, layer)
-    cost = 350 + lvl * 9
+    cost = 200 + lvl * 6
     if p["money"] < cost:
         return f"💰 پول کم است — نیاز: {texts.money(cid, cost)}"
     if lvl >= 95:

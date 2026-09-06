@@ -151,6 +151,12 @@ def ration(uid) -> str:
         add = amount * len(mine) // 6
         amount += add
         tax_note = f"\n👑 خراج {t.fa(len(mine))} مستعمره: +{t.fa(add)}"
+    # 🛢 سهم نفت — درآمد واقعی کشور، بین بازیکنانش
+    from game import economy as _eco
+    oil = _eco.oil_share(p["country"])
+    amount += oil
+    oil_note = (f"\n🛢 سهم نفت کشورت: +{t.money(p['country'], oil)}"
+                if oil >= 10 else "")
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (amount, uid))
     db.kv_set(f"ration:{uid}", str(day))
     db.kv_set(f"streak:{uid}", str(streak))
@@ -175,6 +181,6 @@ def ration(uid) -> str:
                 db.ex("UPDATE users SET money=money+150 WHERE uid=?", (uid,))
                 bonus = "\n🎁 صندوق ویژه‌ی حضور: +۱۵۰ سکه‌ی جایزه!"
     cur = texts.money(p["country"], amount)
-    return (f"🍞 جیره‌ی روزانه: {cur}\n"
+    return (f"🍞 جیره‌ی روزانه: {cur}{oil_note}\n"
             f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"
             f"خزانه: {texts.money(p['country'], get(uid)['money'])}{tax_note}{bonus}")

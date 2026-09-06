@@ -6,8 +6,8 @@ import countries
 import texts
 from game import state
 
-PARTY_COST = 5000
-REBEL_POWER = 300          # قدرت لازم برای شورش
+PARTY_COST = 1200           # متناسب اقتصاد ۱۰۰۰ (~۵ جیره)
+REBEL_POWER = 150           # قدرت لازم برای شورش (بیانیه +۱۰ · عضو +۵)
 SPY_COOLDOWN = 300
 
 

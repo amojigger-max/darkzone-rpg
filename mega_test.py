@@ -344,6 +344,51 @@ async def main():
     T("گفتگوی عادی ساکت", m_chat.out == "", m_chat.out)
     handlers.TEST_MODE = True
 
+    # ═══ v24.5: حساب‌وکتاب — نفت، تحریم، تعادل هزینه‌ها ═══
+    from game import economy as _e
+    T("سهم نفت ایران > ۰", _e.oil_share("ir") > 0, _e.oil_share("ir"))
+    T("سهم نفت بدون‌بازیکن = ۰", _e.oil_share("kp") == 0)
+    T("سهم نفت سقف ۲۰۰", _e.oil_share("sa") <= 200, _e.oil_share("sa"))
+    # جیره با سهم نفت — بازیکن تازه در کشور نفت‌خیز
+    st.ensure(558, "نفت"); st.enlist(558, "sa", "نفت")
+    db.kv_set("ration:558", str(db.now() // 86400 - 1))
+    out = st.ration(558)
+    T("جیره سهم نفت دارد", "سهم نفت" in out, out[:80])
+    # تحریم: یک سیستم واحد — نفت نصف، ارز ضعیف (ایزوله با قطر)
+    db.kv_set("sanction:qa", "0")
+    st.ensure(557, "قطر"); st.enlist(557, "qa", "قطر")
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=555")   # رهبر عربستان تحریم می‌کند
+    share0 = _e.oil_share("qa")
+    r_sanc = _e.sanction(555, "qa")
+    T("تحریم قطر", "تحریم" in r_sanc and _e.sanctioned("qa") is True, r_sanc)
+    share_qa = _e.oil_share("qa")
+    T("تحریم نفت را نصف کرد", share_qa * 2 in (share0, share0 - 1, share0 + 1),
+      f"{share0}→{share_qa}")
+    fx_ir = _e.fx("ir")
+    db.kv_set("sanction:ir", str(db.now()))
+    T("تحریم ارز را ضعیف کرد", _e.fx("ir") > fx_ir * 1.15,
+      f"{fx_ir:.0f}→{_e.fx('ir'):.0f}")
+    db.kv_set("sanction:ir", "0")
+    r_un = _e.sanction(555, "qa")
+    T("برداشتن تحریم", "برداشته شد" in r_un and not _e.sanctioned("qa"), r_un)
+    T("نفت برگشت", _e.oil_share("qa") == share0, f"{share_qa}→{share0}")
+    db.ex("UPDATE users SET is_leader=0 WHERE uid=557")
+    db.ex("UPDATE users SET is_leader=0 WHERE uid=555")
+    # تعادل: حزب با ۱۲۰۰ قابل خرید
+    from game import politics as _po
+    T("حزب ۱۲۰۰", _po.PARTY_COST == 1200, _po.PARTY_COST)
+    st.ensure(556, "حزب"); st.enlist(556, "ir", "حزب")
+    db.ex("UPDATE users SET branch=0, money=1200 WHERE uid=556")
+    r_party = _po.found(556, "حزب آزمون", "ملی")
+    T("حزب با پول دقیق خریدنی", "تأسیس شد" in r_party, r_party)
+    db.ex("UPDATE users SET money=5000 WHERE uid=556")
+    # تعادل: تقویت سپر
+    r_def = defense.strengthen(556, "ضد موشک")
+    T("تقویت سپر ارزان‌تر", "تقویت شد" in r_def, r_def)
+    db.ex("UPDATE users SET money=300 WHERE uid=556")
+    r_def2 = defense.strengthen(556, "ضد موشک")
+    T("تقویت گران‌تر از ۳۰۰", "پول کم" in r_def2, r_def2)
+
     # ═══ v24.4: صفحه‌بندی پیکر کشورها ═══
     for data in ("tp:spy:1", "tp:spy:2", "tp:ally:3", "tp:dwr:0", "tp:snc:4", "tp:spy:99"):
         out = await cb(uid, data)

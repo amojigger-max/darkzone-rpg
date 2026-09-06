@@ -944,7 +944,7 @@ async def cb_party_join(c: CallbackQuery):
 async def cb_party_new(c: CallbackQuery):
     uid = c.from_user.id
     p = state.active(uid)
-    cur = texts.money(p["country"], 5000) if p else "۵٬۰۰۰"
+    cur = texts.money(p["country"], politics.PARTY_COST) if p else "۱٬۲۰۰"
     _pend_set(uid, c.message.chat.id, "party")
     await _edit(c, "\n".join([
         texts.hdr("حزب جدید", "🏛"), "",
