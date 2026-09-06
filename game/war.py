@@ -291,6 +291,7 @@ def army(uid) -> str:
     n_players = db.one("SELECT COUNT(*) n FROM users WHERE country=?", (cid,))["n"]
     brs = db.q("SELECT branch, COUNT(*) n FROM users "
                "WHERE country=? AND branch IS NOT NULL GROUP BY branch", (cid,))
+    bmap = {str(i): b for i, b in enumerate(c["branches"])}
     eq = db.q("SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
               "WHERE u.country=?", (cid,))
     atk = sum(countries.ITEMS[r["iid"]][3] * r["dur"] // 100 for r in eq
@@ -307,7 +308,8 @@ def army(uid) -> str:
              t.row("نیروی انسانی", manpower)]
     if brs:
         lines.append("▫️ شاخه‌ها: " + " · ".join(
-            f"{r['branch']} {texts.fa(r['n'])}" for r in brs))
+            f"{bmap.get(str(r['branch']), r['branch'])} {texts.fa(r['n'])}"
+            for r in brs))
     if economy.sanctioned(cid):
         lines.append("🚫 کشورت تحت تحریم اقتصادی است!")
     w = war_of(cid)

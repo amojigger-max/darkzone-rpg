@@ -183,7 +183,7 @@ def kb_pol() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚔️ جنگ و حمله", callback_data="mn:war"),
          InlineKeyboardButton(text="📰 بیانیه", callback_data="mn:stmt")],
         [InlineKeyboardButton(text="🕊 درخواست صلح", callback_data="mn:peace"),
-         InlineKeyboardButton(text="🆘 کمک اتحاد", callback_data="mn:help")],
+         InlineKeyboardButton(text="🆘 کمک اتحاد", callback_data="mn:helpally")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -366,8 +366,6 @@ async def cb_menu(c: CallbackQuery):
         await _edit(c, texts.hdr("شورای امنیت", "🌍") + "\n\nیکی را انتخاب کن:", kb_world())
     elif what == "me":
         await _edit(c, state.card(uid), kb_main())
-    elif what == "help":
-        await _edit(c, texts.HELP)
     elif what == "battle":
         await _edit(c, military.battle(uid), kb_mil())
     elif what == "rest":
@@ -444,7 +442,7 @@ async def cb_menu(c: CallbackQuery):
                     kb_mil())
     elif what == "peace":
         await _edit(c, war.peace_request(uid), kb_pol())
-    elif what == "help":
+    elif what == "helpally":
         await _edit(c, war.call_help(uid), kb_pol())
     await c.answer()
 
@@ -461,9 +459,12 @@ async def cb_buy(c: CallbackQuery):
     uid = c.from_user.id
     iid = c.data.split(":")[1]
     it = countries.ITEMS[iid]
-    p = state.get(uid)
+    p = state.active(uid)
+    if not p:
+        await c.answer("⛔ اول «شروع»", show_alert=True)
+        return
     price = economy.real_price(it[5])
-    if p and p["money"] < price:
+    if p["money"] < price:
         await c.answer(f"💰 پول کم — {texts.fa(price)} لازم است", show_alert=True)
         return
     if not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
@@ -526,6 +527,8 @@ async def _ev_claim(m: Message, word: str):
     r = events.claim(m.chat.id, m.from_user.id, word)
     if r:
         await m.answer(r, parse_mode="HTML")
+    else:
+        await m.answer("⚡ رویداد فعالی نیست — چشم انتظار باش.", parse_mode="HTML")
 
 
 # ═══════════ 🗣 دستورهای متنی فارسی ═══════════
@@ -551,7 +554,7 @@ async def fa_words(m: Message):
         return await m.answer(state.card(uid) if state.active(uid) else texts.WELCOME,
                               parse_mode="HTML",
                               reply_markup=kb_main() if state.active(uid) else kb_countries())
-    if w in ("پروفایل", "کارنام", "کارت"):
+    if w in ("پروفایل", "کارنامه", "کارت"):
         return await m.answer(state.card(uid), parse_mode="HTML", reply_markup=kb_main())
     if w in ("ارتشی", "سرباز"):
         return await m.answer(texts.hdr("انتخاب شاخه", "🪖") + "\nشاخه‌ی کشورت:",
@@ -560,7 +563,7 @@ async def fa_words(m: Message):
         return await m.answer(military.arsenal(uid), parse_mode="HTML", reply_markup=kb_arsenal(uid))
     if w == "خرید":
         return await m.answer(military.arsenal(uid), parse_mode="HTML", reply_markup=kb_arsenal(uid))
-    if w in ("رزم", "نبرد", "جنگیدن"):
+    if w in ("رزم", "جنگیدن"):
         return await m.answer(military.battle(uid), parse_mode="HTML", reply_markup=kb_mil())
     if w in ("استراحت", "درمان"):
         return await m.answer(military.rest(uid), parse_mode="HTML", reply_markup=kb_mil())
