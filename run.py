@@ -176,6 +176,11 @@ async def main():
 
     me = await bot.get_me()
     await bot.delete_webhook(drop_pending_updates=False)
+    # 🧹 منوی دستورها همیشه تازه — فقط جنگ جهانی، هیچ دستور قدیمی
+    with contextlib.suppress(Exception):
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([BotCommand(
+            command="start", description="⚔️ شروع جنگ جهانی — ۲۱ کشور، مستعمره، پول زنده")])
     db.log("info", f"boot WW @{me.username}")
     print(f"⚔️ جنگ جهانی online as @{me.username}", flush=True)
 
