@@ -161,7 +161,7 @@ def respond_to_strike(attacker: str, defender: str, kind: str, hit: int) -> list
     if random.random() < 0.5:
         db.ex("UPDATE defense SET level=MAX(5,level-2) WHERE cid=? AND layer=?",
               (attacker, layer))
-        out.append(f"💥 آتش متقابل — لایه‌ی {layer} کشورت آسیب دید («پدافند»)")
+        out.append(f"💥 آتش متقابل — لایه‌ی {layer} کشورت آسیب دید (منو → سپر ملی)")
     # متحدینِ مدافع وارد می‌شوند
     for ally in _allies_flat(defender):
         if ally != attacker and random.random() < 0.5:

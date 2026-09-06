@@ -36,7 +36,7 @@ def join_branch(uid, idx: int) -> str:
         t.row("شاخه", c["branches"][idx]),
         t.row("کشور", f"{c['flag']} {c['name']}"),
         "", "اکنون سرباز این شاخه‌ای — درجه با رزم بالا می‌رود.",
-        "🛒 تجهیزات: «تجهیزات» · ⚔️ رزم: «رزم»"])
+        "🛒 گام بعد: تجهیزات بخر و رزم کن — از «منو»"])
 
 
 # ═══════════ تجهیزات ═══════════
@@ -49,14 +49,17 @@ def arsenal(uid) -> str:
     c = countries.COUNTRIES[p["country"]]
     sp = countries.spec_of(p["country"])
     lines = [texts.hdr(f"زرادخانه {c['name']}", "🛒"),
-             f"🎖 تخصص کشور: {sp[2]} — +{sp[1]}٪ در حمله‌ی {sp[0]}", ""]
+             f"🎖 تخصص کشور: {sp[2]} — +{texts.fa(sp[1])}٪ در حمله‌ی {sp[0]}", ""]
+    from game import economy
     for iid in c["items"]:
-        nm, em, _, atk, guard, price, _ = (None,) * 7
         it = countries.ITEMS[iid]
         own = db.one("SELECT qty,dur FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = f"✅ دوام {texts.fa(own['dur'])}٪" if own else f"💰 {texts.fa(it[5])}"
-        lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️{it[3]} 🛡{it[4]} · {mark}")
-    lines += ["", "خرید: «خرید نام‌تجهیز» · تعمیر: «تعمیر»"]
+        price = economy.real_price(it[5])
+        mark = (f"✅ {texts.fa(own['qty'])}× · دوام {texts.fa(own['dur'])}٪"
+                if own else f"💰 {texts.fa(price)}")
+        lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️{texts.fa(it[3])} "
+                     f"🛡{texts.fa(it[4])} · {mark}")
+    lines += ["", "🛒 خرید با دکمه‌های زیر — ×۱ یا ×۵ (سقف ۹ عدد)"]
     return "\n".join(lines)
 
 
@@ -95,26 +98,33 @@ def buy(uid, iid: str, qty: int = 1) -> str:
             f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪")
 
 
+def black_sample(uid) -> list:
+    """نمونه‌ی ساعتی بازار سیاه — همین لیست در متن و دکمه‌ها."""
+    p = state.active(uid)
+    if not p:
+        return []
+    import random as _r
+    _r.seed(db.now() // 3600 + uid)      # هر ساعت تغییر
+    foreign = [iid for iid, it in countries.ITEMS.items()
+               if it[2] != p["country"]]
+    return _r.sample(foreign, k=min(8, len(foreign)))
+
+
 def blackmarket(uid) -> str:
     """بازار سیاه — تجهیزات کشورهای دیگر با قیمت ۱.۷ برابر."""
     from game import economy
     p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
-    import random as _r
-    _r.seed(db.now() // 3600 + uid)      # هر ساعت تغییر
-    foreign = [iid for iid, it in countries.ITEMS.items()
-               if it[2] != p["country"]]
-    sample = _r.sample(foreign, k=min(8, len(foreign)))
     lines = [texts.hdr("بازار سیاه", "☠"), "قیمت ×۱.۷ — قاچاق است، رسمی نیست!", ""]
-    for iid in sample:
+    for iid in black_sample(uid):
         it = countries.ITEMS[iid]
         price = int(economy.real_price(it[5]) * 1.7)
         c = countries.COUNTRIES[it[2]]
         own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = "✅" if own else f"💰{texts.fa(price // 1000)}k"
+        mark = "✅ از قبل داری" if own else f"💰 {texts.fa(price)}"
         lines.append(f"{it[1]} {it[0]} ({c['flag']}) — {mark}")
-    lines += ["", "خرید: «خریدسیاه نام» — مثال: <code>خریدسیاه f35</code>"]
+    lines += ["", "🛒 خرید با دکمه‌های زیر — هر ساعت لیست عوض می‌شود."]
     return "\n".join(lines)
 
 
@@ -125,7 +135,7 @@ def buy_black(uid, iid: str) -> str:
         return "⛔ اول «شروع»"
     it = countries.ITEMS.get(iid)
     if not it or it[2] == p["country"]:
-        return "⛔ این تجهیز در بازار سیاه نیست (یا مال کشور خودت است — «تجهیزات»)"
+        return "⛔ این تجهیز در بازار سیاه نیست (یا مال کشور خودت است — زرادخانه)"
     if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
         return "✅ از قبل داری."
     price = int(economy.real_price(it[5]) * 1.7)
@@ -177,7 +187,7 @@ def repair(uid) -> str:
         total += cost
         db.ex("UPDATE inventory SET dur=100 WHERE uid=? AND iid=?", (uid, r["iid"]))
     if total == 0:
-        return "💰 پول تعمیر کافی نیست — «جیره» بگیر یا رزم کن."
+        return "💰 پول تعمیر کافی نیست — جیره‌ی روزانه‌ات را بگیر (منو)."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (total, uid))
     return f"🔧 تعمیر کامل انجام شد — هزینه: 💰 {texts.fa(total)}"
 
@@ -211,7 +221,7 @@ def battle(uid, tier: int = None) -> str:
     if not p:
         return "⛔ اول «شروع»"
     if not p["branch"]:
-        return "🪖 اول به شاخه‌ای بپیوند — «ارتشی»"
+        return "🪖 اول عضو شاخه شو — منو → عضویت نظامی"
     if db.now() - int(db.kv_get(f"battle:{uid}", "0")) < 20:
         return "⏳ ۲۰ ثانیه بین نبردها صبر کن."
     db.kv_set(f"battle:{uid}", str(db.now()))
@@ -267,7 +277,7 @@ def battle(uid, tier: int = None) -> str:
         t.hdr("عقب‌نشینی", "💨"),
         t.row("دشمن", name), "",
         *log[:6], "",
-        "جان کم آمد — «استراحت» یا «تعمیر» لازم است."])
+        "💨 جان کم آمد — از منو: 🏥 استراحت یا 🔧 تعمیر."])
 
 
 def rest(uid) -> str:

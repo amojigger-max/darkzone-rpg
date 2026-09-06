@@ -92,8 +92,11 @@ def on_war_start():
     _save(w)
 
 
-def toggle_strait(name: str) -> str:
-    """بستن/بازکردن تنگه — فقط رهبر کشور کنترل‌کننده."""
+def toggle_strait(uid: int, name: str) -> str:
+    """بستن/بازکردن تنگه — فقط رهبران."""
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        return "👑 فقط رهبر کشور می‌تواند تنگه را ببندد یا باز کند."
     key = {"هرمز": "hormuz", "باب‌المندب": "bab", "تایوان": "taiwan", "سوئز": "suez"}.get(name)
     if not key:
         return "⛔ تنگه: هرمز · باب‌المندب · تایوان · سوئز"
@@ -129,7 +132,7 @@ def oil_income():
         t = treasury(cid)
         bpd = OIL_BPD.get(cid, 0)
         # تنگه بسته + تحریم → فروش کمتر، قیمت بالاتر
-        blocked = (w["hormuz"] == 0 and cid in ("ir", "sa", "ae", "iq", "kw" if False else "iq"))
+        blocked = (w["hormuz"] == 0 and cid in ("ir", "sa", "ae", "iq", "kw"))
         sold = bpd * (0.35 if blocked else 1.0) * (1 - t["sanction"])
         income = int(sold * w["oil"] / 1000)   # هزار دلار → سکه‌ی بازی
         t["oil_sold"] += income

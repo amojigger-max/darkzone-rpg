@@ -73,8 +73,15 @@ async def cb(uid, data):
     key = data.split(":")[0]
     fn = {"ad": handlers.cb_admin, "cyp": handlers.cb_cy_page, "cy": handlers.cb_country,
           "hp": handlers.cb_helppage, "df": handlers.cb_defense, "mn": handlers.cb_menu,
-          "br": handlers.cb_branch, "wp": handlers.cb_buy, "up": handlers.cb_upgrade,
-          "spy": handlers.cb_spy, "ally": handlers.cb_ally, "st": handlers.cb_strike}[key]
+          "br": handlers.cb_branch, "wp": handlers.cb_buy, "wp5": handlers.cb_buy,
+          "up": handlers.cb_upgrade, "spy": handlers.cb_spy, "ally": handlers.cb_ally,
+          "st": handlers.cb_strike, "du": handlers.cb_duel, "dac": handlers.cb_duel_accept,
+          "pac": handlers.cb_peace_accept, "aac": handlers.cb_ally_accept,
+          "sur": handlers.cb_surrender, "sury": handlers.cb_surrender_yes,
+          "dwr": handlers.cb_declare_war, "snc": handlers.cb_sanction,
+          "str": handlers.cb_strait, "bb": handlers.cb_buy_black,
+          "qc": handlers.cb_quest_claim, "pj": handlers.cb_party_join,
+          "pnew": handlers.cb_party_new, "pcancel": handlers.cb_pcancel}[key]
     try:
         await fn(c)
         return (c.message.out or "") + "|" + (c.answered or "")
@@ -108,14 +115,14 @@ async def main():
     db.ex("UPDATE users SET money=99999 WHERE uid=?", (uid,))
     out = await cb(uid, "wp:fajr5")
     T("خرید فجر-۵", "خریداری" in out or "از قبل" in out or "🛒" in out, out)
-    out = await cmd("رزم", uid)
-    T("رزم", "رزم" in out or "پیروزی" in out or "شکست" in out, out)
-    out = await cmd("استراحت", uid)
-    T("استراحت", out and "CRASH" not in out, out)
-    out = await cmd("تعمیر", uid)
-    T("تعمیر", out and "CRASH" not in out, out)
-    out = await cmd("جیره", uid)
-    T("جیره", "جیره" in out, out)
+    out = await cb(uid, "mn:battle")
+    T("رزم (دکمه)", "پیروزی" in out or "عقب‌نشینی" in out or "شاخه" in out, out)
+    out = await cb(uid, "mn:rest")
+    T("استراحت (دکمه)", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:repair")
+    T("تعمیر (دکمه)", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:ration")
+    T("جیره (دکمه)", "جیره" in out, out)
 
     # ═══ ۳. همه‌ی کلیدهای منو (mn:) ═══
     mn_keys = ["main", "mil", "pol", "world", "me", "help", "battle", "rest", "arsenal",
@@ -138,68 +145,89 @@ async def main():
     for layer in defense.LAYERS:
         out = await cb(uid, f"df:{layer}")
         T(f"df:{layer}", "تقویت" in out or "پول" in out or "اوج" in out, out)
-    out = await cmd("تقویت ضد موشک", uid)
-    T("تقویت متنی", "تقویت" in out or "پول" in out, out)
 
     # ═══ ۶. جنگ کامل: اعلام → ۵ نوع حمله → جبهه → صلح ═══
     db.ex("UPDATE users SET is_leader=1, money=999999, hp=100 WHERE uid=?", (uid,))
-    out = await cmd("جنگ اسرائیل", uid)
-    T("اعلام جنگ", "اعلام جنگ" in out, out)
+    # منوی جنگ در حال صلح → انتخاب کشور
+    out = await cb(uid, "mn:war")
+    T("منو جنگ (بی‌جنگ)", "در جنگ نیست" in out, out)
+    out = await cb(uid, "dwr:il")
+    T("اعلام جنگ (دکمه)", "اعلام جنگ" in out, out)
     for kind in ("موشکی", "هوایی", "دریایی", "زمینی", "پهپادی"):
         db.kv_set(f"strike:{uid}", "0")
-        out = await cmd(f"حمله {kind} 3", uid)
-        T(f"حمله {kind}", out and "CRASH" not in out, out)
-    # دکمه‌های st:
-    for data in ("st:موشکی:1", "st:هوایی:3", "st:پهپادی:1"):
-        db.kv_set(f"strike:{uid}", "0")
-        out = await cb(uid, data)
-        T(f"{data}", "CRASH" not in out, out)
-    out = await cmd("جبهه", uid)
-    T("جبهه", "امتیاز جبهه" in out, out)
-    # اتحاد + کمک + صلح
+        out = await cb(uid, f"st:{kind}:3")
+        T(f"حمله {kind} (دکمه)", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:front")
+    T("جبهه (دکمه)", "امتیاز جبهه" in out, out)
+    # اتحاد + کمک + صلح — همه دکمه‌ای
     other = reg["ir"]
     db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (other,))
     out = await cb(other, "ally:hz")
-    T("پیشنهاد اتحاد", "اتحاد" in out, out)
-    out = await cmd("قبول اتحاد حزب‌الله", other)
-    T("قبول اتحاد", "اتحاد" in out, out)
+    T("پیشنهاد اتحاد (دکمه)", "اتحاد" in out and "ارسال شد" in out, out)
+    out = await cb(uid, "aac:ir")
+    T("قبول اتحاد (دکمه)", "اتحاد رسمی" in out, out)
     out = await cb(uid, "mn:helpally")
-    T("کمک اتحاد (فیکس‌شده)", "اتحاد" in out or "جبهه" in out or "اتحادی" in out, out)
-    out = await cmd("صلح", uid)
-    T("درخواست صلح", "صلح" in out, out)
-    out = await cmd("قبول صلح", other)
-    T("قبول صلح", "صلح" in out or "جنگی نیست" in out, out)
+    T("کمک اتحاد", "اتحاد" in out or "جبهه" in out or "اتحادی" in out, out)
+    out = await cb(uid, "mn:peace")
+    T("درخواست صلح (دکمه)", "ارسال شد" in out, out)
+    out = await cb(reg["il"], "pac:")
+    T("قبول صلح (دکمه)", "پیمان صلح" in out or "درخواست صلحی" in out, out)
 
     # ═══ ۷. سیاست کامل ═══
-    out = await cmd("حزب میهن‌دوستان ملی", uid)
-    T("تأسیس حزب", "حزب" in out, out)
-    out = await cmd("احزاب", uid)
-    T("احزاب", "حزب" in out or "حزبی" in out, out)
-    out = await cmd("بیانیه ما برای آبادی می‌جنگیم", uid)
-    T("بیانیه", "بیانیه" in out, out)
+    # حزب جدید: دکمه → pending → متن آزاد
+    db.ex("UPDATE users SET money=999999 WHERE uid=?", (uid,))
+    out = await cb(uid, "pnew:")
+    T("حزب جدید (پرامپت)", "نام حزب" in out, out)
+    out = await cmd("میهن‌دوستان | ملی", uid)
+    T("تأسیس حزب (pending)", "تأسیس شد" in out, out)
+    out = await cb(uid, "mn:parties")
+    T("احزاب (دکمه)", "حزب" in out or "حزبی" in out, out)
+    pid = db.one("SELECT id FROM parties WHERE name LIKE '%میهن%'")["id"]
+    st.ensure(555, "هم‌کشور"); st.enlist(555, "hz", "هم‌کشور")
+    db.ex("UPDATE users SET branch='sepah' WHERE uid=555")
+    out = await cb(555, f"pj:{pid}")
+    T("عضویت حزب (دکمه)", "پیوستی" in out, out)
+    # بیانیه: دکمه → pending → متن آزاد
+    out = await cb(uid, "mn:stmt")
+    T("بیانیه (پرامپت)", "متن بیانیه" in out, out)
+    out = await cmd("ما برای آبادی این سرزمین می‌جنگیم", uid)
+    T("بیانیه (pending)", "بیانیه‌ی رسمی" in out, out)
     out = await cb(uid, "spy:il")
-    T("جاسوسی دکمه", "جاسوسی" in out or "CRASH" not in out and out != "", out)
-    out = await cmd("شورش", reg["us"])
-    T("شورش", out and "CRASH" not in out, out)
+    T("جاسوسی دکمه", "جاسوسی" in out or (out and "CRASH" not in out), out)
+    out = await cb(reg["us"], "mn:rebel")
+    T("شورش (دکمه)", out and "CRASH" not in out, out)
+    # لغو pending
+    await cb(uid, "mn:stmt")
+    out = await cmd("لغو", uid)
+    T("لغو pending (متن)", "لغو شد" in out, out)
+    await cb(uid, "mn:stmt")
+    out = await cb(uid, "pcancel:")
+    T("لغو pending (دکمه)", "لغو شد" in out, out)
+    handlers.TEST_MODE = False
+    m_silent = Msg("متن رهاشده", uid)
+    await handlers.fa_words(m_silent)
+    T("pending پاک شد", m_silent.out == "", m_silent.out)
+    handlers.TEST_MODE = True
 
     # ═══ ۸. مأموریت + بازار سیاه + ارتقا + نبرد ═══
-    out = await cmd("ماموریت", uid)
-    T("ماموریت", "مأموریت" in out or "ماموریت" in out, out)
-    out = await cmd("جایزه", uid)
-    T("جایزه", out and "CRASH" not in out, out)
-    out = await cmd("بازارسیاه", uid)
-    T("بازارسیاه", "سیاه" in out, out)
-    out = await cmd("خریدسیاه sejjil", uid)
-    T("خریدسیاه", out and "CRASH" not in out, out)
-    out = await cmd("ارتقا fajr5", uid)
-    T("ارتقا متنی", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:quest")
+    T("مأموریت (دکمه)", "مأموریت" in out, out)
+    out = await cb(uid, "qc:")
+    T("دریافت جایزه (دکمه)", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:black")
+    T("بازار سیاه (دکمه)", "سیاه" in out and "دکمه" in out, out)
+    sample = military.black_sample(uid)
+    out = await cb(uid, f"bb:{sample[0]}")
+    T("خرید قاچاق (دکمه)", out and "CRASH" not in out, out)
     out = await cb(uid, "up:fajr5")
     T("ارتقا دکمه", out and "CRASH" not in out, out)
     await cb(reg["ir"], "br:0")
-    out = await cmd("نبرد علی", uid)
-    T("نبرد چالش", "چالش" in out, out)
-    out = await cmd("قبول نبرد", reg["ir"])
-    T("قبول نبرد", "نبرد" in out or "چالش" in out or "سرباز" in out, out)
+    out = await cb(uid, "mn:duel")
+    T("نبرد (پیکر حریف)", "حریفت" in out or "نبرد" in out, out)
+    out = await cb(uid, f"du:{reg['ir']}")
+    T("نبرد چالش (دکمه)", "چالش" in out, out)
+    out = await cb(reg["ir"], "dac:")
+    T("قبول نبرد (دکمه)", "نبرد" in out or "چالش" in out or "سرباز" in out, out)
 
     # ═══ ۹. پنل مالک ═══
     out = await cmd("مدیریت", OWNER)
@@ -221,10 +249,10 @@ async def main():
     T("تازه‌وارد بلاک", "شروع" in out, out)
     out = await cb(NOOB, "wp:fajr5")
     T("خرید بدون ثبت‌نام بلاک", "شروع" in out, out)
-    out = await cmd("جنگ آمریکا", P3)
-    T("جنگ غیررهبر", "رهبر" in out, out)
-    out = await cmd("حمله موشکی", P3)
-    T("حمله غیررهبر", "رهبر" in out, out)
+    out = await cb(P3, "dwr:us")
+    T("جنگ غیررهبر (دکمه)", "رهبر" in out, out)
+    out = await cb(P3, "st:موشکی:1")
+    T("حمله غیررهبر (دکمه)", "رهبر" in out, out)
     # بدون پول
     db.ex("UPDATE users SET money=0 WHERE uid=?", (reg["jp"],))
     out = await cb(reg["jp"], "wp:izumo")
@@ -232,34 +260,46 @@ async def main():
     # مهمات صفر
     db.ex("UPDATE users SET is_leader=1, money=999999 WHERE uid=?", (reg["kp"],))
     await cb(reg["kp"], "wp:hwasong")
-    await cmd("جنگ کره‌ی جنوبی", reg["kp"])
+    await cb(reg["kp"], "dwr:kr")
     wid = db.one("SELECT id FROM wars WHERE status='active' AND a='kp'")["id"]
     db.kv_set(f"ammo:{wid}:kp", "0")
     db.kv_set(f"strike:{reg['kp']}", "0")
-    out = await cmd("حمله موشکی", reg["kp"])
+    out = await cb(reg["kp"], "st:موشکی:1")
     T("مهمات صفر", "مهمات" in out, out)
     # کوول‌داون
     db.kv_set(f"ammo:{wid}:kp", "50")
-    await cmd("حمله موشکی", reg["kp"])          # موج اول می‌رود
+    await cb(reg["kp"], "st:موشکی:1")          # موج اول می‌رود
     db.kv_set(f"ammo:{wid}:kp", "50")
-    out = await cmd("حمله موشکی", reg["kp"])     # بلافاصله → کوول‌داون
+    out = await cb(reg["kp"], "st:موشکی:1")     # بلافاصله → کوول‌داون
     T("کوول‌داون ۴۵ث", "۴۵" in out or "ثانیه" in out, out[:80])
     # جنگ دوم همزمان
-    out = await cmd("جنگ ژاپن", reg["kp"])
+    out = await cb(reg["kp"], "dwr:jp")
     T("جنگ دوم بلاک", "درگیر" in out, out)
 
     # ═══ ۱۱. جهان/راهنما/اخبار برای هر ۲۱ کشور ═══
     for cid in countries.COUNTRIES:
         g = guide.guide(cid)
         T(f"guide:{cid}", "تخصص" in g and "راهبرد" in g, g[:80])
-    out = await cmd("راهنما آمریکا", uid)
-    T("راهنما آمریکا", "راهنمای آمریکا" in out, out)
-    out = await cmd("قدرت", uid)
-    T("قدرت کشورها", "قدرت نظامی" in out, out)
-    out = await cmd("مستعمره‌ها", uid)
-    T("مستعمره‌ها", "مستعمره" in out, out)
-    out = await cmd("تسلیم", uid)
-    T("تسلیم", out and "CRASH" not in out, out)
+    out = await cb(uid, "mn:cguide")
+    T("راهنمای کشور (دکمه)", "راهنمای" in out, out)
+    out = await cb(uid, "mn:power")
+    T("قدرت کشورها (دکمه)", "قدرت نظامی" in out, out)
+    out = await cb(uid, "mn:colonies")
+    T("مستعمره‌ها (دکمه)", "مستعمره" in out, out)
+    # تسلیم: تأیید دومرحله‌ای
+    out = await cb(uid, "sur:")
+    T("تسلیم (تأیید)", "مطمئنی" in out, out)
+    out = await cb(uid, "sury:")
+    T("تسلیم (نهایی)", out and "CRASH" not in out, out)
+    # تحریم و تنگه — دکمه‌ای
+    out = await cb(uid, "snc:")
+    T("تحریم (پیکر)", "کدام کشور" in out, out)
+    out = await cb(uid, "snc:il")
+    T("تحریم (اجرا)", "تحریم" in out, out)
+    out = await cb(uid, "str:")
+    T("تنگه (پیکر)", "کدام تنگه" in out, out)
+    out = await cb(uid, "str:هرمز")
+    T("تنگه هرمز (اجرا)", "تنگه" in out, out)
     out = await cb(uid, "mn:power")
     T("mn:power", "قدرت نظامی" in out, out)
     out = war.world_status()
@@ -274,20 +314,34 @@ async def main():
         latin = re.findall(r"[0-9]", fn_out)
         T(f"فارسی: {fn_out.split(chr(10))[0][:24]}", not latin, latin)
 
-    # ═══ ۱۳. همه‌ی دستورهای متنی — کرش‌صفر ═══
-    all_cmds = ["شروع", "منو", "پروفایل", "کارنامه", "کارت", "ارتشی", "سرباز",
-                "تجهیزات", "زرادخانه", "خرید", "رزم", "جنگیدن", "استراحت", "درمان",
-                "تعمیر", "جیره", "دستمزد", "احزاب", "عضویت x", "شورش", "جاسوسی",
-                "جهان", "رتبه", "برترین", "نقشه", "بازار", "اقتصاد", "پدافند",
-                "جبهه", "اخبار", "ارتش", "ماموریت", "مأموریت", "چالش", "جایزه",
-                "بازارسیاه", "سیاه", "نبرد x", "صلح", "راهنما", "کمک",
-                "تحویل", "اعزام", "رمزگشایی"]
-    crash = []
-    for c in all_cmds:
-        out = await cmd(c, uid)
-        if not out or "CRASH" in out:
-            crash.append(c)
-    T(f"دستورها ({len(all_cmds)})", not crash, crash)
+    # ═══ ۱۳. دستورهای مرده = سکوت مطلق · زنده‌ها = پاسخ ═══
+    handlers.TEST_MODE = False
+    dead = ["پروفایل", "کارنامه", "کارت", "ارتشی", "سرباز", "تجهیزات", "زرادخانه",
+            "خرید", "رزم", "جنگیدن", "استراحت", "درمان", "تعمیر", "جیره", "دستمزد",
+            "احزاب", "عضویت x", "شورش", "جاسوسی", "جهان", "رتبه", "برترین", "نقشه",
+            "بازار", "اقتصاد", "پدافند", "جبهه", "اخبار", "ارتش", "ماموریت",
+            "مأموریت", "چالش", "جایزه", "بازارسیاه", "سیاه", "نبرد x", "صلح",
+            "راهنما", "کمک", "تحریم", "تنگه", "قبول", "تسلیم", "بیانیه", "حزب",
+            "جنگ آمریکا", "حمله موشکی", "خریدسیاه f35", "اتحاد روسیه"]
+    leak = []
+    for c in dead:
+        m_d = Msg(c, uid)
+        await handlers.fa_words(m_d)
+        if m_d.out:
+            leak.append(f"{c}→{str(m_d.out)[:30]}")
+    T(f"دستورهای مرده ساکت ({len(dead)})", not leak, leak)
+    alive = ["شروع", "منو", "تحویل", "اعزام", "رمزگشایی"]
+    silent = []
+    for c in alive:
+        m_a = Msg(c, uid)
+        await handlers.fa_words(m_a)
+        if not m_a.out:
+            silent.append(c)
+    T("دستورهای زنده پاسخ‌گو", not silent, silent)
+    m_chat = Msg("سلام بچه‌ها چی کار میکنید؟", uid)
+    await handlers.fa_words(m_chat)
+    T("گفتگوی عادی ساکت", m_chat.out == "", m_chat.out)
+    handlers.TEST_MODE = True
 
     # ═══ v24.1: خرید ×۵ + سقف + فیلتر دستور + AI رهبر ═══
     import countries as _co

@@ -52,7 +52,7 @@ def view(uid) -> str:
             all_done = False
     if all_done:
         total = sum(g["prize"] for g in st["goals"])
-        lines.append(f"🎁 آماده! «جایزه» → 💰 {texts.fa(total)}")
+        lines.append(f"🎁 آماده! دکمه‌ی «دریافت جایزه» → 💰 {texts.fa(total)}")
     return "\n".join(lines)
 
 
@@ -72,7 +72,7 @@ def claim(uid) -> str:
             total += g["prize"]
             any_pending = True
     if not any_pending:
-        return "⏳ هنوز هدف کاملی برای دریافت نیست — «مأموریت»"
+        return "⏳ هنوز هدف کاملی برای دریافت نیست — اهداف را از منو ببین."
     import json
     db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (total, uid))

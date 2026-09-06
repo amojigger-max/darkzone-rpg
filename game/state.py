@@ -79,17 +79,19 @@ def card(uid) -> str:
     return "\n".join([
         t.hdr("پرونده‌ی نظامی", "🎖"),
         t.row("نام", p["name"]),
-        t.row("کشور", f"{c.get('flag','')} {c.get('name','—')}"),
+        t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}"),
+        t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else ("عضو حزب" if party else "شهروند")),
+        t.DASH,
         t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
         t.row("درجه", countries.rank_name(p["level"])),
-        t.row("سطح", f"{t.fa(p['level'])} · تجربه {t.fa(p['xp'])}/{t.fa(xp_need(p['level']))}"),
+        t.row("تجربه", f"{t.fa(p['xp'])}/{t.fa(xp_need(p['level']))}"),
+        t.DASH,
         t.row("خزانه", f"💰 {t.money(p['country'], p['money'])}"),
         t.row("جان", f"❤️ {t.fa(p['hp'])}/{t.fa(p['max_hp'])}"),
-        t.row("سوابق", f"⚔️ {t.fa(p['kills'])} کشته · 🕵 {t.fa(p['spy_ops'])} جاسوسی"),
+        t.row("سوابق", f"⚔️ {t.fa(p['kills'])} · 🕵 {t.fa(p['spy_ops'])}"),
         t.row("حزب", party["name"] if party else "—"),
-        t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else ("عضو حزب" if party else "شهروند")),
-    ] + ([medals(uid)] if medals(uid) else []))
+    ] + ([t.DASH, medals(uid)] if medals(uid) else []))
 
 
 def medals(uid) -> str:
@@ -137,7 +139,7 @@ def ration(uid) -> str:
         streak = 1
     import countries
     t = texts
-    amount = 200 + min(7, streak) * 60      # سخت‌تر — روز ۷+: ۱۱۹۰
+    amount = 200 + min(7, streak) * 60      # روز ۷+: ۶۲۰
     tax_note = ""
     col = geo_colony(p["country"])
     if col:                                    # ⛓ زیر یوغ مستعمره
@@ -154,10 +156,22 @@ def ration(uid) -> str:
     db.kv_set(f"streak:{uid}", str(streak))
     from game import quests
     quests.on_event(uid, "جیره")
-    import random as _r
+    # 🎁 صندوق ویژه‌ی حضور — واقعی: ۳۵٪ شانس یک تجهیز رایگان برای سربازان وفادار
     bonus = ""
-    if streak >= 3 and _r.random() < 0.35:
-        bonus = "\n🎁 صندوق ویژه‌ی حضور: یک تجهیز رایگان شانس داشت! (بگذار شانس بسنجد)"
+    if streak >= 3:
+        import random as _r
+        own = {r["iid"] for r in db.q("SELECT iid FROM inventory WHERE uid=?", (uid,))}
+        cands = [iid for iid in countries.COUNTRIES[p["country"]]["items"]
+                 if iid not in own]
+        if _r.random() < 0.35 and cands:
+            iid = _r.choice(cands)
+            db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)",
+                  (uid, iid))
+            it = countries.ITEMS[iid]
+            bonus = f"\n🎁 صندوق ویژه‌ی حضور: {it[1]} {it[0]} رایگان رسید!"
+        elif _r.random() < 0.35:
+            db.ex("UPDATE users SET money=money+100 WHERE uid=?", (uid,))
+            bonus = "\n🎁 صندوق ویژه‌ی حضور: +۱۰۰ سکه‌ی جایزه!"
     cur = texts.money(p["country"], amount)
     return (f"🍞 جیره‌ی روزانه: {cur}\n"
             f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"

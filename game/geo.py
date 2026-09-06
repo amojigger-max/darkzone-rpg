@@ -155,7 +155,6 @@ def free_colony(cid: str):
 
 
 def country_map(cid: str) -> str:
-    import db
     import countries
     import texts
     c = countries.COUNTRIES[cid]

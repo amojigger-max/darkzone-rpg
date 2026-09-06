@@ -44,7 +44,7 @@ def alliance_request(leader_uid: int, target: str) -> str:
     tc = countries.COUNTRIES[target]
     mc = countries.COUNTRIES[p["country"]]
     return (f"🤝 پیشنهاد اتحاد {mc['flag']} {mc['name']} → {tc['flag']} {tc['name']} ارسال شد.\n"
-            f"رهبر {tc['name']} باید «قبول اتحاد {p['country']}» بزند.")
+            f"رهبر {tc['name']} دکمه‌ی «🤝 قبول اتحاد» را بزند.")
 
 
 def alliance_accept(leader_uid: int, cid: str) -> str:
@@ -79,7 +79,7 @@ def call_help(leader_uid: int) -> str:
         return "🕊 کشورت در جنگ نیست."
     al = allies_of(p["country"])
     if not al:
-        return "🤝 اتحادی نداری — «اتحاد کشور» پیشنهاد بده."
+        return "🤝 اتحادی نداری — از منو → اتحاد، پیشنهاد بده."
     col = "score_a" if w["a"] == p["country"] else "score_b"
     boost = 2 * len(al)
     db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (boost, w["id"]))
@@ -100,7 +100,7 @@ def peace_request(uid) -> str:
     other = _enemy(p["country"], wr)
     oc = countries.COUNTRIES[other]
     return (f"🕊 درخواست صلح به {oc['flag']} {oc['name']} ارسال شد.\n"
-            f"رهبر آن کشور باید بنویسد: <code>قبول صلح</code>")
+            f"رهبر آن کشور دکمه‌ی «🕊 قبول صلح» را بزند.")
 
 
 def peace_accept(uid) -> str:
@@ -132,7 +132,7 @@ def surrender(uid) -> str:
     mine = w["score_a"] if w["a"] == cid else w["score_b"]
     theirs = w["score_b"] if w["a"] == cid else w["score_a"]
     if mine >= theirs:
-        return "🏆 داری می‌بری! چرا تسلیم؟ صلحِ برابر: «صلح»"
+        return "🏆 داری می‌بری! چرا تسلیم؟ صلحِ برابر: منو → درخواست صلح"
     db.ex("UPDATE wars SET status='won', winner=? WHERE id=?", (enemy, w["id"]))
     # 🏳 غرامت جنگ: بازندگان می‌پردازند، برندگان می‌گیرند
     reps = 300 + (theirs - mine) * 20
@@ -175,14 +175,13 @@ def duel_request(uid, target_name, target_uid=None) -> str:
     t = texts
     return "\n".join([
         t.hdr("چالش نبرد", "⚔️"),
-        f"🇮🇷 {t.mention(uid, p['name'] or 'سرباز')} از {c['name']} چالش داد!",
+        f"{c['flag']} {t.mention(uid, p['name'] or 'سرباز')} از {c['name']} چالش داد!",
         f"🎯 حریف: <b>{target_name}</b>",
         t.K,
-        "حریف باید بنویسد: «قبول نبرد» — تا ۵ دقیقه!"])
+        "حریف دکمه‌ی «⚔️ قبول نبرد» را بزند — تا ۵ دقیقه!"])
 
 
 def duel_accept(uid) -> str:
-    import json
     d = db.jload(db.kv_get("duel:last"), None)
     if not d or d.get("b") not in (None, uid) or db.now() - d.get("ts", 0) > 300:
         return "⛔ چالشی در کار نیست (یا مهلتش گذشت)."
@@ -260,8 +259,8 @@ def declare(leader_uid: int, target: str) -> str:
         f"{mc['flag']} <b>{mc['name']}</b> ← حمله ← {tc['flag']} <b>{tc['name']}</b>",
         t.K,
         "🗺 <b>جبهه‌ها:</b> " + " · ".join(fronts),
-        "🤝 اتحادها: هر طرف می‌تواند «کمک» بخواهد.",
-        f"⏱ {WAR_HOURS} ساعت — سربازان با «رزم» جبهه را جلو می‌برند.",
+        "🤝 اتحادها: هر طرف می‌تواند کمک اتحاد بخواهد (منو).",
+        f"⏱ {WAR_HOURS} ساعت — سربازان با رزم جبهه را جلو می‌برند.",
         "🛢 اقتصاد جهانی این جنگ را حس خواهد کرد."])
 
 
@@ -394,7 +393,7 @@ def strike(uid, kind: str, count: int = 1) -> str:
     _init_ammo(w)
     ammo = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
     if ammo <= 0:
-        return "🎯 مهمات جنگ تمام شد — «جبهه» را ببین. صلح یا شکست."
+        return "🎯 مهمات جنگ تمام شد — جبهه را از منو ببین. صلح یا شکست."
     db.kv_set(f"strike:{uid}", str(db.now()))
     from game import quests as _q
     _q.on_event(uid, "حمله")
@@ -402,7 +401,7 @@ def strike(uid, kind: str, count: int = 1) -> str:
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
     if not have:
-        return f"⛔ تجهیزات <b>{kind}</b> نداری — «تجهیزات»"
+        return f"⛔ تجهیزات <b>{kind}</b> نداری — زرادخانه‌ات را کامل کن (منو)"
     best = max(have, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100)
     it = countries.ITEMS[best["iid"]]
     ecid = _enemy(p["country"], w)

@@ -118,5 +118,5 @@ def status(cid: str) -> str:
         lines.append(f"{LAYERS.get(r['layer'], '▪️')} {r['layer']}: "
                      f"<b>{texts.fa(r['level'])}</b> {bar}")
     lines += ["", "⚡ جنگ الکترونیک آسیبِ ضربه‌های عبوری را کم می‌کند.",
-              "➕ تقویت: دکمه‌های زیر یا «تقویت ضد موشک»"]
+              "➕ تقویت: دکمه‌های زیر"]
     return "\n".join(lines)

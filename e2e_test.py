@@ -59,6 +59,7 @@ class CBMsg:
     """message با edit_text/edit_reply_markup"""
     def __init__(self, m):
         self._m = m
+        self.chat = m.chat
 
     async def edit_text(self, txt, **kw):
         SENT.append(txt)
@@ -115,11 +116,12 @@ async def main():
     await run("cb", "br:1 سپاه", handlers.cb_branch(wrap_cb("br:1", 1)))
     for iid in ("sejjil", "shahed", "dhow"):
         await run("cb", f"wp:{iid}", handlers.cb_buy(wrap_cb(f"wp:{iid}", 1)))
+    for what in ("battle", "rest", "repair", "ration", "quest", "black", "duel",
+                 "wstat", "power", "colonies", "front", "army", "def", "cguide",
+                 "news", "upgrade", "peace", "helpally"):
+        await run("cb", f"mn:{what}", handlers.cb_menu(wrap_cb(f"mn:{what}", 1)))
     await run("msg", "رزم", handlers.fa_words(M("رزم", 1)))
     await run("msg", "رزم دوباره", handlers.fa_words(M("رزم", 1)))
-    await run("msg", "تعمیر", handlers.fa_words(M("تعمیر", 1)))
-    await run("msg", "استراحت", handlers.fa_words(M("استراحت", 1)))
-    await run("msg", "جیره", handlers.fa_words(M("جیره", 1)))
 
     # ═══ ۴) سیاست ═══
     await run("msg", "حزب", handlers.fa_words(M("حزب", 1)))

@@ -30,7 +30,7 @@ def found(uid, name: str, ideology: str) -> str:
     if len(name) < 3 or len(name) > 28:
         return "⛔ نام حزب: ۳ تا ۲۸ حرف."
     if p["money"] < PARTY_COST:
-        return f"💰 تأسیس حزب {texts.fa(PARTY_COST)} می‌ارزد — داری: {texts.fa(p['money'])}"
+        return f"💰 تأسیس حزب {texts.fa(PARTY_COST)} سکه می‌ارزد — داری: {texts.fa(p['money'])} سکه"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (PARTY_COST, uid))
     db.ex("INSERT INTO parties(name,country,ideology,leader_uid,members,power,created) "
           "VALUES(?,?,?,?,1,10,?)", (texts.esc(name), p["country"],
@@ -39,7 +39,7 @@ def found(uid, name: str, ideology: str) -> str:
     db.ex("UPDATE users SET party_id=? WHERE uid=?", (pid, uid))
     return (f"🏛 حزب <b>{texts.esc(name)}</b> رسماً تأسیس شد!\n"
             f"ایدئولوژی: {texts.esc(ideology or 'ملی')}\n"
-            f"برای عضوگیری: «احزاب» — برای اعلام مواضع: «بیانیه متن»")
+            f"عضوگیری: فهرست احزاب — مواضع: دکمه‌ی 📰 بیانیه (منو)")
 
 
 def list_parties(uid) -> str:
@@ -51,14 +51,14 @@ def list_parties(uid) -> str:
     c = countries.COUNTRIES[p["country"]]
     lines = [texts.hdr(f"احزاب {c['name']}", "🏛"), ""]
     if not rows:
-        lines.append("هنوز حزبی نیست — «حزب نام» بساز!")
+        lines.append("هنوز حزبی نیست — اولین حزب را تو بساز! ⬇️")
     for r in rows:
         lead = db.one("SELECT name FROM users WHERE uid=?", (r["leader_uid"],))
         tag = " 🔴 شورشی" if r["rebel"] else ""
         lines.append(f"▫️ <b>{r['name']}</b>{tag} — {r['ideology']}")
         lines.append(f"   👥 {r['members']} عضو · ⚡ قدرت {r['power']} · رهبر: {lead['name'] if lead else '—'}")
     lines.append("")
-    lines.append("عضویت: «عضویت نام‌حزب»")
+    lines.append("👥 عضویت با دکمه‌های زیر · ➕ حزب جدید هم همان‌جا")
     return "\n".join(lines)
 
 
@@ -69,7 +69,7 @@ def join(uid, name: str) -> str:
     party = db.one("SELECT * FROM parties WHERE name=? AND country=?",
                    (name, p["country"]))
     if not party:
-        return "⛔ حزبی با این نام در کشورت نیست — «احزاب»"
+        return "⛔ حزبی با این نام در کشورت نیست — فهرست احزاب (منو)"
     if p["party_id"] == party["id"]:
         return "🔒 از قبل عضوی."
     db.ex("UPDATE users SET party_id=? WHERE uid=?", (party["id"], uid))
@@ -83,7 +83,7 @@ def statement(uid, body: str) -> str:
     p = state.active(uid)
     party = my_party(uid)
     if not p or not party:
-        return "⛔ بیانیه فقط برای اعضای حزب — «حزب نام» بساز یا عضو شو."
+        return "⛔ بیانیه فقط برای اعضای حزب — اول حزب بساز یا عضو شو (منو → احزاب)."
     if len(body) < 10:
         return "⛔ متن بیانیه کوتاه است — حداقل ۱۰ حرف."
     t = texts
@@ -119,7 +119,7 @@ def rebel(uid) -> str:
         f"{countries.COUNTRIES[party['country']]['name']} قیام کرد!",
         t.K,
         "دولت پاسخ خواهد داد — نبرد سرنوشت کشور است.",
-        "⚔️ شورشیان: «رزم» بزنید — هر پیروزی به شورش نزدیک‌تر است."])
+        "⚔️ شورشیان: رزم کنید (منو) — هر پیروزی به شورش نزدیک‌تر است."])
 
 
 # ═══════════ جاسوسی ═══════════
