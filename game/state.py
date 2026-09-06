@@ -75,11 +75,27 @@ def card(uid) -> str:
 
 
 def ration(uid) -> str:
-    """جیره‌ی روزانه."""
+    """جیره‌ی روزانه + زنجیره‌ی حضور — روزهای پیوسته جایزه‌ی بیشتر."""
+    p = active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
     day = db.now() // 86400
     if db.kv_get(f"ration:{uid}") == str(day):
         return "🍞 جیره‌ی امروز را گرفتی — فردا برگرد."
-    db.ex("UPDATE users SET money=money+500 WHERE uid=?", (uid,))
+    streak = int(db.kv_get(f"streak:{uid}", "0"))
+    # دیروز گرفته؟ زنجیره ادامه؛ وگرنه ریست
+    if db.kv_get(f"ration:{uid}") == str(day - 1):
+        streak += 1
+    else:
+        streak = 1
+    amount = 500 + min(7, streak) * 150      # روز ۷+: ۱۵۵۰
+    db.ex("UPDATE users SET money=money+? WHERE uid=?", (amount, uid))
     db.kv_set(f"ration:{uid}", str(day))
-    p = get(uid)
-    return f"🍞 جیره‌ی روزانه پرداخت شد: 💰 +۵۰۰\nخزانه: {p['money']:,}"
+    db.kv_set(f"streak:{uid}", str(streak))
+    import random as _r
+    bonus = ""
+    if streak >= 3 and _r.random() < 0.35:
+        bonus = "\n🎁 صندوق ویژه‌ی حضور: یک تجهیز رایگان شانس داشت! (بگذار شانس بسنجد)"
+    return (f"🍞 جیره‌ی روزانه: 💰 +{amount:,}\n"
+            f"🔥 زنجیره‌ی حضور: {streak} روز پیوسته\n"
+            f"خزانه: {get(uid)['money']:,}{bonus}")

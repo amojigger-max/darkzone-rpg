@@ -21,7 +21,7 @@ bot: Bot = None
 async def pv_only_group(m: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="➕ افزودن به یک گروه",
-                             url="https://t.me/WorldWar3RPGbot?startgroup=true")]])
+                             url="https://t.me/REDarkZoneBot?startgroup=true")]])
     await m.answer(texts.PV_ONLY, reply_markup=kb)
 
 
@@ -137,11 +137,17 @@ def kb_targets(uid, action) -> InlineKeyboardMarkup:
 
 def kb_strikes() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 موشکی", callback_data="st:موشکی"),
-         InlineKeyboardButton(text="✈️ هوایی", callback_data="st:هوایی")],
-        [InlineKeyboardButton(text="🚢 دریایی", callback_data="st:دریایی"),
-         InlineKeyboardButton(text="🚜 زمینی", callback_data="st:زمینی"),
-         InlineKeyboardButton(text="🛩 پهپادی", callback_data="st:پهپادی")],
+        [InlineKeyboardButton(text="🚀 موشکی ۱×", callback_data="st:موشکی:1"),
+         InlineKeyboardButton(text="🚀 موشکی ۳×", callback_data="st:موشکی:3"),
+         InlineKeyboardButton(text="🚀 موشکی ۵×", callback_data="st:موشکی:5")],
+        [InlineKeyboardButton(text="✈️ هوایی ۱×", callback_data="st:هوایی:1"),
+         InlineKeyboardButton(text="✈️ هوایی ۳×", callback_data="st:هوایی:3"),
+         InlineKeyboardButton(text="✈️ هوایی ۵×", callback_data="st:هوایی:5")],
+        [InlineKeyboardButton(text="🚢 دریایی ۱×", callback_data="st:دریایی:1"),
+         InlineKeyboardButton(text="🚢 دریایی ۳×", callback_data="st:دریایی:3")],
+        [InlineKeyboardButton(text="🚜 زمینی ۱×", callback_data="st:زمینی:1"),
+         InlineKeyboardButton(text="🚜 زمینی ۳×", callback_data="st:زمینی:3"),
+         InlineKeyboardButton(text="🛩 پهپادی ۱×", callback_data="st:پهپادی:1")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -316,7 +322,10 @@ async def cb_ally(c: CallbackQuery):
 
 @router.callback_query(F.data.startswith("st:"))
 async def cb_strike(c: CallbackQuery):
-    await c.message.edit_text(war.strike(c.from_user.id, c.data.split(":")[1]),
+    parts = c.data.split(":")
+    kind = parts[1]
+    count = int(parts[2]) if len(parts) > 2 else 1
+    await c.message.edit_text(war.strike(c.from_user.id, kind, count),
                               parse_mode="HTML", reply_markup=kb_strikes())
     await c.answer()
 
@@ -396,7 +405,11 @@ async def fa_words(m: Message):
                               reply_markup=kb_strikes())
     if w in ("حمله", "ضربه"):
         if arg:
-            return await m.answer(war.strike(uid, arg), parse_mode="HTML", reply_markup=kb_strikes())
+            parts2 = arg.split()
+            kind = parts2[0]
+            count = int(parts2[1]) if len(parts2) > 1 and parts2[1].isdigit() else 1
+            return await m.answer(war.strike(uid, kind, count), parse_mode="HTML",
+                                  reply_markup=kb_strikes())
         return await m.answer("🎯 نوع حمله: <code>حمله موشکی</code> · <code>حمله هوایی</code> · "
                               "<code>حمله دریایی</code> · <code>حمله زمینی</code> · <code>حمله پهپادی</code>",
                               parse_mode="HTML", reply_markup=kb_strikes())

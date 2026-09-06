@@ -14,7 +14,10 @@ import countries
 import texts
 from game import economy, geo, state
 
-WAR_HOURS = 12
+
+FA_D = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+WAR_HOURS = 24
 
 EMOJI_KIND = {"🚀": "موشکی", "🛩": "پهپادی", "🚢": "دریایی", "🤿": "دریایی",
               "🚜": "زمینی", "🛻": "زمینی", "💥": "توپخانه", "🛡": "پدافندی", "✈️": "هوایی"}
@@ -122,8 +125,8 @@ def _enemy(cid: str, w) -> str:
     return w["b"] if w["a"] == cid else w["a"]
 
 
-def strike(uid, kind: str) -> str:
-    """رهبر: حمله‌ی خاص — نیازمند تجهیزات همان نوع."""
+def strike(uid, kind: str, count: int = 1) -> str:
+    """رهبر: حمله‌ی خاص با تعداد — هر شلیک جدا دفع یا برخورد می‌خورد."""
     p = state.active(uid)
     if not p or not p["is_leader"]:
         return "👑 فقط رهبر کشور."
@@ -131,51 +134,57 @@ def strike(uid, kind: str) -> str:
     if not w:
         return "🕊 کشورت در جنگ نیست."
     if db.now() - int(db.kv_get(f"strike:{uid}", "0")) < 45:
-        return "⏳ ۴۵ ثانیه بین حملات."
+        return "⏳ ۴۵ ثانیه بین موج حمله."
     db.kv_set(f"strike:{uid}", str(db.now()))
-    # تجهیزات همان نوع در انبار رهبر
+    count = max(1, min(5, count))
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
     if not have:
-        kinds = {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢", "زمینی": "🚜", "پهپادی": "🛩"}
-        return f"⛔ تجهیزات {kinds.get(kind, '')} <b>{kind}</b> نداری — «تجهیزات»"
+        return f"⛔ تجهیزات <b>{kind}</b> نداری — «تجهیزات»"
     best = max(have, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100)
     it = countries.ITEMS[best["iid"]]
-    dmg = it[3] * best["dur"] // 100 + p["level"] * 2
-    # پدافند دشمن — بازیکنان دشمن؟ دولت هوشمند
     ecid = _enemy(p["country"], w)
     ec = countries.COUNTRIES[ecid]
-    def_rows = db.q(
-        "SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
-        "WHERE u.country=? ", (ecid,))
+    def_rows = db.q("SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
+                    "WHERE u.country=?", (ecid,))
     def_pwr = sum(countries.ITEMS[r["iid"]][4] * r["dur"] // 100
                   for r in def_rows if kind_of(r["iid"]) == "پدافندی") + ec["mil"] * 6
-    intercepted = random.random() < min(0.75, def_pwr / (def_pwr + dmg))
-    db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
-          (random.randint(8, 18), uid, best["iid"]))
     t = texts
-    if intercepted:
-        return "\n".join([
-            t.hdr("حمله دفع شد", "🛡"),
-            f"🚀 {it[0]} {it[1]} → {ec['flag']} {ec['name']}",
-            f"پدافند {ec['name']} آن را در آسمان نابود کرد!",
-            f"└─ دوام {it[0]}: −۱۵٪"])
-    col = "score_a" if w["a"] == p["country"] else "score_b"
-    db.ex(f"UPDATE wars SET {col}={col}+3 WHERE id=?", (w["id"],))
-    # پیشروی جبهه → اشغال شهر
-    score = db.one(f"SELECT {col} s FROM wars WHERE id=?", (w["id"],))["s"]
-    lines = [t.hdr("ضربه‌ی موفق", "💥"),
-             f"{it[0]} {it[1]} → {ec['flag']} {ec['name']}",
-             f"└─ آسیب: {dmg} · امتیاز جبهه +۳"]
-    if score and score % 5 == 0:      # هر ۵ امتیاز یک شهر می‌افتد
-        city = random.choice([c for c in geo.CITIES.get(ecid, [])
-                              if c not in geo.occupied(ecid)] or ["مرز"])
-        msg = geo.occupy(ecid, city, p["country"])
-        if msg:
-            lines += ["", f"🚩 <b>{city} سقوط کرد!</b>"]
-    # دولت هوشمند: پاسخ خودکار
-    if random.random() < 0.5:
-        lines += ["", f"⚠️ {ec['name']} آماده‌ی پاسخ است — منتظر ضدحمله باش."]
+    lines = [t.hdr(f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
+                                          "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
+             f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}", t.K]
+    score_add = 0
+    for n in range(1, count + 1):
+        base_dmg = it[3] * best["dur"] // 100 + p["level"] * 2
+        dmg = max(4, int(base_dmg * random.uniform(0.7, 1.3)))
+        intercepted = random.random() < min(0.75, def_pwr / (def_pwr + dmg))
+        if intercepted:
+            lines.append(f"  {n}. 🛡 دفع شد — پدافند در آسمان نابودش کرد")
+        else:
+            lines.append(f"  {n}. 💥 برخورد! آسیب {dmg}")
+            score_add += 3
+        db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
+              (random.randint(6, 14), uid, best["iid"]))
+    if score_add:
+        col = "score_a" if w["a"] == p["country"] else "score_b"
+        db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (score_add, w["id"]))
+        lines.append(f"⚔️ امتیاز جبهه: +{score_add}")
+        # هر ۵ امتیاز یک شهر می‌افتد
+        score = db.one(f"SELECT {col} s FROM wars WHERE id=?", (w["id"],))["s"]
+        if score and score % 5 < count:
+            city = random.choice([c for c in geo.CITIES.get(ecid, [])
+                                  if c not in geo.occupied(ecid)] or ["مرز"])
+            msg = geo.occupy(ecid, city, p["country"])
+            if msg:
+                lines.append(f"🚩 <b>{city} سقوط کرد!</b>")
+    else:
+        lines.append("💀 همه دفع شد — پدافند دشمن بیدار است.")
+    lines.append(f"🛠 دوام {it[0]}: −{str(count * 10).translate(FA_D)}٪")
+    # ضدحمله‌ی هوشمند دشمن
+    if random.random() < 0.4 and score_add:
+        edmg = random.randint(8, 25)
+        db.ex("UPDATE users SET hp=MAX(15,hp-?) WHERE uid=?", (edmg, uid))
+        lines.append(f"⚠️ ضدحمله‌ی {ec['name']}! 🩸 −{edmg}")
     return "\n".join(lines)
 
 
