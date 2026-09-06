@@ -381,12 +381,14 @@ async def cb_country(c: CallbackQuery):
     if not ok:
         await c.answer("خطا — دوباره امتحان کن.", show_alert=True)
         return
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid,))   # 👑 بازیکن = رهبر
     co = countries.COUNTRIES[cid]
     t = texts
     await c.message.delete()
     await c.message.answer("\n".join([
         t.hdr("ثبت‌نام تکمیل شد", "🎖"),
         t.row("کشور", f"{co['flag']} {co['name']}"),
+        t.row("نقش", "👑 رهبر کشور"),
         t.row("خزانه", "💰 ۲٬۰۰۰"),
         "", "🪖 اولین قدم: «عضویت نظامی» — سپس تجهیزات بخر.",
         "🎮 منوی اصلی: «منو»"]), parse_mode="HTML", reply_markup=kb_mil())

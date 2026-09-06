@@ -150,6 +150,9 @@ async def main():
     # 🧹 ثبت‌های آزمایشی قدیمی (Player بدون فعالیت) پاک می‌شوند — کشورها به NPC برمی‌گردند
     db.ex("DELETE FROM users WHERE name LIKE 'Player%' AND chat_id IS NULL "
           "AND branch IS NULL")
+    # 👑 هر بازیکنِ واقعیِ گروه، رهبر کشور خودش است
+    db.ex("UPDATE users SET is_leader=1 WHERE country IS NOT NULL "
+          "AND chat_id IS NOT NULL")
     import countries
     countries.init_items()
     handlers.bot = bot = Bot(config.TOKEN,
