@@ -135,7 +135,7 @@ def surrender(uid) -> str:
         return "🏆 داری می‌بری! چرا تسلیم؟ صلحِ برابر: «صلح»"
     db.ex("UPDATE wars SET status='won', winner=? WHERE id=?", (enemy, w["id"]))
     # 🏳 غرامت جنگ: بازندگان می‌پردازند، برندگان می‌گیرند
-    reps = 600 + (theirs - mine) * 40
+    reps = 300 + (theirs - mine) * 20
     for r in db.q("SELECT uid FROM users WHERE country=?", (cid,)):
         db.ex("UPDATE users SET money=MAX(0,money-?) WHERE uid=?", (reps, r["uid"]))
     for r in db.q("SELECT uid FROM users WHERE country=?", (enemy,)):

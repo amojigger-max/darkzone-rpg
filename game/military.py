@@ -4,7 +4,7 @@ import random
 import db
 import countries
 import texts
-from game import state
+from game import economy, state
 
 
 def branch_name(p) -> str:
@@ -60,22 +60,39 @@ def arsenal(uid) -> str:
     return "\n".join(lines)
 
 
-def buy(uid, iid: str) -> str:
+MAX_QTY = 9
+
+
+def buy(uid, iid: str, qty: int = 1) -> str:
+    """خرید ×۱ یا ×۵ — عمده ۱۰٪ تخفیف، سقف ۹ عدد از هر تجهیز."""
     p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
     it = countries.ITEMS.get(iid)
     if not it or iid not in countries.COUNTRIES[p["country"]]["items"]:
         return "⛔ این تجهیز در زرادخانه‌ی کشورت نیست."
-    if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
-        return "✅ از قبل داری."
-    if p["money"] < it[5]:
-        return f"💰 پول کم داری — لازم: {texts.fa(it[5])} · داری: {texts.fa(p['money'])}"
-    db.ex("UPDATE users SET money=money-? WHERE uid=?", (it[5], uid))
-    db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
+    qty = max(1, min(5, int(qty)))
+    if qty >= 5:
+        qty = 5
+        cost = economy.real_price(it[5]) * 5 * 0.9     # عمده: ۱۰٪ تخفیف
+    else:
+        cost = economy.real_price(it[5])
+    cost = int(cost)
+    row = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+    have = row["qty"] if row else 0
+    if have + qty > MAX_QTY:
+        return f"📦 سقف نگهداری {texts.fa(MAX_QTY)} عدد است — داری: {texts.fa(have)}"
+    if p["money"] < cost:
+        return (f"💰 پول کم داری — لازم: {texts.money(p['country'], cost)} · "
+                f"داری: {texts.money(p['country'], p['money'])}")
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
+    db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,?,100) "
+          "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+?", (uid, iid, qty, qty))
     from game import quests
     quests.on_event(uid, "خرید")
-    return f"🛒 <b>{it[0]}</b> {it[1]} خریداری شد — دوام ۱۰۰٪"
+    t = texts
+    return (f"🛒 <b>{it[0]}</b> {it[1]} ×{t.fa(qty)} خریداری شد — "
+            f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪")
 
 
 def blackmarket(uid) -> str:
@@ -230,7 +247,7 @@ def battle(uid, tier: int = None) -> str:
                   (random.randint(4, 10), uid, r["iid"]))
     t = texts
     if ehp <= 0:
-        loot = (tier + 1) * 350
+        loot = (tier + 1) * 160
         xp = 60 + tier * 40
         db.ex("UPDATE users SET money=money+?, kills=kills+1, hp=MAX(20,hp) WHERE uid=?",
               (loot, uid))
@@ -259,7 +276,7 @@ def rest(uid) -> str:
         return "⛔ اول «شروع»"
     if db.now() - int(db.kv_get(f"rest:{uid}", "0")) < 120:
         return "⏳ استراحت داده شد — ۲ دقیقه صبر کن."
-    cost = 200                                   # سخت‌تر — درمان دیگر رایگان نیست
+    cost = 100                                   # سخت‌تر — درمان دیگر رایگان نیست
     if p["money"] < cost:
         return f"💰 درمان {texts.money(p['country'], cost)} می‌ارزد — جیره بگیر یا بجنگ."
     db.kv_set(f"rest:{uid}", str(db.now()))

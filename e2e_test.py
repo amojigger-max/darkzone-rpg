@@ -11,7 +11,8 @@ db.init(":memory:")
 import countries
 countries.init_items()
 
-import handlers  # noqa — ثبت router
+import handlers
+handlers.TEST_MODE = True  # noqa — ثبت router
 from game import economy, events, geo, military, politics, state, war
 
 DONE, FAILS = 0, []

@@ -9,6 +9,7 @@ db.init(":memory:")
 import countries
 countries.init_items()
 import handlers
+handlers.TEST_MODE = True
 import config
 from game import state as st, war, military, defense, ai, economy, politics, quests, geo, guide, events
 
@@ -106,7 +107,7 @@ async def main():
     T("شاخه ذخیره", p["branch"] is not None)
     db.ex("UPDATE users SET money=99999 WHERE uid=?", (uid,))
     out = await cb(uid, "wp:fajr5")
-    T("خرید فجر-۵", "خریداری" in out or "از قبل" in out, out)
+    T("خرید فجر-۵", "خریداری" in out or "از قبل" in out or "🛒" in out, out)
     out = await cmd("رزم", uid)
     T("رزم", "رزم" in out or "پیروزی" in out or "شکست" in out, out)
     out = await cmd("استراحت", uid)
@@ -288,6 +289,55 @@ async def main():
             crash.append(c)
     T(f"دستورها ({len(all_cmds)})", not crash, crash)
 
+    # ═══ v24.1: خرید ×۵ + سقف + فیلتر دستور + AI رهبر ═══
+    import countries as _co
+    st.ensure(777, "تست"); st.enlist(777, "hz", "تست")
+    db.ex("UPDATE users SET money=99999, is_leader=0 WHERE uid=777")
+    r1 = military.buy(777, "kornet", 1)
+    r5 = military.buy(777, "kornet", 5)
+    T("خرید ×۱", "خریداری" in r1, r1)
+    T("خرید ×۵ تخفیف", "×۵" in r5, r5)
+    q = db.one("SELECT qty FROM inventory WHERE uid=777 AND iid='kornet'")["qty"]
+    T("موجودی ۶", q == 6, q)
+    r9 = military.buy(777, "kornet", 5)
+    T("سقف ۹", "سقف" in r9, r9)
+    m0 = st.get(777)
+    price5 = int(economy.real_price(_co.ITEMS['kornet'][5]) * 5 * 0.9)
+    p1 = int(economy.real_price(_co.ITEMS['kornet'][5]))
+    T("هزینه ×۵ درست", m0["money"] == 99999 - p1 - price5, m0["money"])
+    # پول شروع ۱۰۰۰
+    st.ensure(888, "نو"); st.enlist(888, "ir", "نو")
+    T("پول شروع ۱۰۰۰", st.get(888)["money"] == 1000, st.get(888)["money"])
+    # فیلتر دستورها در حالت واقعی
+    handlers.TEST_MODE = False
+    class M2:
+        def __init__(s2, tx, u2):
+            s2.text, s2.from_user, s2.chat, s2.message_id = tx, U(u2), Chat(), 1
+            s2.out = ""
+        async def answer(s2, txt=None, **kw):
+            s2.out = txt; return s2
+    mm = M2("رزم", 777)
+    r = await handlers.fa_words(mm)
+    T("دستور حذف‌شده بی‌پاسخ", r is None, r)
+    mm2 = M2("سلام بچه‌ها", 777)
+    r2 = await handlers.fa_words(mm2)
+    T("گفتگوی عادی ساکت", r2 is None, r2)
+    mm3 = M2("منو", 777)
+    await handlers.fa_words(mm3)
+    T("منو زنده", mm3.out and "پرونده" in mm3.out, mm3.out)
+    mm4 = M2("تحویل", 777)
+    await handlers.fa_words(mm4)
+    T("رویداد زنده", mm4.out is not None and mm4.out != "", getattr(mm4, "out", ""))
+    handlers.TEST_MODE = True
+    # AI: کشور رهبر‌دار جنگ NPC نمی‌گیرد
+    from game import ai as _ai
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=777")
+    T("AI رهبر-دار", _ai._has_leader("hz") is True)
+    db.ex("UPDATE wars SET status='done'")
+    for _ in range(30):
+        _ai.tick()
+    got_war = db.one("SELECT 1 FROM wars WHERE status='active' AND (a='hz' OR b='hz')")
+    T("NPC به رهبر‌دار جنگ نمی‌دهد", not got_war, "hz جنگ گرفت!")
     print(f"\n{'═' * 20} نتیجه {'═' * 20}")
     print(f"✅ موفق: {len(PASS)}")
     if FAIL:

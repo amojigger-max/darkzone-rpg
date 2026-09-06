@@ -1,6 +1,7 @@
 """🎮 جنگ جهانی — رابط کاربری: کاملاً فارسی، دکمه‌ای، تمیز."""
 
 import contextlib
+import os
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton,
@@ -18,6 +19,16 @@ router = Router()
 def handlers_bot():
     """نمونه‌ی بات برای ویرایش پیام — از بیرون هم در دسترس."""
     return globals().get("bot")
+
+
+# 🎛 فقط همین دستورهای متنی زنده‌اند — همه‌چیز دیگر از «منو»
+TEST_MODE = False
+TEXT_ALLOWED = {
+    "شروع", "منو",
+    "تحویل", "اعزام", "رمزگشایی",               # رویدادهای گروهی
+    "رهبر", "ثبت", "تغییر", "تنظیم",             # مالک
+    "مدیریت", "ادمین", "اعلام", "سربازها", "توزیع",
+}
 bot: Bot = None
 
 
@@ -323,11 +334,15 @@ def kb_arsenal(uid) -> InlineKeyboardMarkup:
     if c:
         for iid in c["items"]:
             it = countries.ITEMS[iid]
-            own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+            row_ = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+            have = row_["qty"] if row_ else 0
             price = economy.real_price(it[5])
-            mark = "✅" if own else f"💰{price // 1000}k"
-            rows.append([InlineKeyboardButton(text=f"{it[1]} {it[0]} — {mark}",
-                                              callback_data=f"wp:{iid}")])
+            mark = f"📦{texts.fa(have)}" if have else "—"
+            rows.append([
+                InlineKeyboardButton(
+                    text=f"{it[1]} {it[0]} — 💰{texts.fa(price)} · {mark}",
+                    callback_data=f"wp:{iid}"),
+                InlineKeyboardButton(text="×۵", callback_data=f"wp5:{iid}")])
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -410,7 +425,7 @@ async def cb_country(c: CallbackQuery):
         t.hdr("ثبت‌نام تکمیل شد", "🎖"),
         t.row("کشور", f"{co['flag']} {co['name']}"),
         t.row("نقش", "👑 رهبر کشور"),
-        t.row("خزانه", "💰 ۲٬۰۰۰"),
+        t.row("خزانه", "💰 ۱٬۰۰۰"),
         "", "🪖 اولین قدم: «عضویت نظامی» — سپس تجهیزات بخر.",
         "🎮 منوی اصلی: «منو»"]), parse_mode="HTML", reply_markup=kb_mil())
     await c.answer()
@@ -558,45 +573,33 @@ async def cb_branch(c: CallbackQuery):
     await c.answer()
 
 
+@router.callback_query(F.data.startswith("wp5:"))
 @router.callback_query(F.data.startswith("wp:"))
 async def cb_buy(c: CallbackQuery):
     uid = c.from_user.id
+    qty = 5 if c.data.startswith("wp5:") else 1
     iid = c.data.split(":")[1]
-    if iid not in countries.ITEMS:
-        await c.answer("⛔ تجهیز نامعتبر", show_alert=True)
-        return
-    it = countries.ITEMS[iid]
-    p = state.active(uid)
-    if not p:
-        await c.answer("⛔ اول «شروع»", show_alert=True)
-        return
-    price = economy.real_price(it[5])
-    if p["money"] < price:
-        p_ = state.get(uid)
-        await c.answer(f"💰 پول کم — {texts.money(p_['country'] if p_ else 'us', price)} لازم است",
-                       show_alert=True)
-        return
-    if not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
-        db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
-        db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)",
-              (uid, iid))
-        await c.answer(f"🛒 {it[0]} خریداری شد!", show_alert=False)
+    msg = military.buy(uid, iid, qty)
+    await c.answer("خرید انجام شد 🛒" if msg.startswith("🛒") else msg[:180],
+                   show_alert=not msg.startswith("🛒"))
+    if msg.startswith("🛒"):
+        with contextlib.suppress(Exception):
+            await c.message.edit_text(military.arsenal(uid), parse_mode="HTML",
+                                      reply_markup=kb_arsenal(uid))
         # 🖼 عکس سینمایی تجهیزات شاخص
-        import os
-        img = f"assets/img/{it[6]}"
-        if os.path.exists(img):
-            with contextlib.suppress(Exception):
-                with open(img, "rb"):
-                    await c.message.answer_photo(
-                        FSInputFile(img),
-                        caption=(f"{it[1]} <b>{it[0]}</b>\n"
-                                 f"⚔️ حمله {it[3]} · 🛡 دفاع {it[4]}\n"
-                                 f"🛠 دوام ۱۰۰٪ — حالا قسمت توست."),
-                        parse_mode="HTML")
-    else:
-        await c.answer("✅ از قبل داری", show_alert=True)
-    await c.message.edit_text(military.arsenal(uid), parse_mode="HTML",
-                              reply_markup=kb_arsenal(uid))
+        it = countries.ITEMS.get(iid)
+        if it and it[6]:
+            img = f"assets/img/{it[6]}"
+            if os.path.exists(img):
+                with contextlib.suppress(Exception):
+                    with open(img, "rb"):
+                        await c.message.answer_photo(
+                            FSInputFile(img),
+                            caption=(f"{it[1]} <b>{it[0]}</b>\n"
+                                     f"⚔️ حمله {it[3]} · 🛡 دفاع {it[4]}\n"
+                                     f"🛠 دوام ۱۰۰٪ — حالا قسمت توست."),
+                            parse_mode="HTML")
+    return
 
 
 @router.callback_query(F.data.startswith("up:"))
@@ -650,6 +653,9 @@ async def fa_words(m: Message):
     w = parts[0]
     arg = parts[1] if len(parts) > 1 else ""
     uid = m.from_user.id
+    # 🎛 گروه تمیز: هر متن دیگری نادیده — همه‌چیز از «منو»
+    if not TEST_MODE and w not in TEXT_ALLOWED:
+        return
     state.ensure(uid, m.from_user.first_name, m.chat.id,
                  getattr(m.from_user, "username", None))
     # رویداد گروهی

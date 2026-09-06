@@ -72,10 +72,16 @@ def tick() -> list:
     for w in wars:
         if random.random() > 0.45:
             continue
+        # 🔑 کشورِ رهبر‌دار را NPC هدایت نمی‌کند — فقط دولت‌های بدون رهبر می‌جنگند
+        leaderless = [s for s in (w["a"], w["b"]) if not _has_leader(s)]
+        if not leaderless:
+            continue
         r = _ai_strike(w)
         if not r:
             continue
         side, gain = r
+        if side not in leaderless:
+            side = leaderless[0]     # امتیاز فقط به کشورِ بدون‌رهبر
         col = "score_a" if side == "a" else "score_b"
         db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (gain, w["id"]))
         cid = w[side]
@@ -89,10 +95,11 @@ def tick() -> list:
                 city = random.choice(free)
                 if geo.occupy(ecid, city, cid):
                     out.append(f"🚩 {_flag(cid)} شهر <b>{city}</b>ِ {_flag(ecid)} را گرفت!")
-    # ۲) اعلان جنگ تازه توسط یک رقیب بی‌جنگ
+    # ۲) اعلان جنگ تازه توسط یک رقیب بی‌جنگ — هرگز روی کشورِ رهبر‌دار
     if len(wars) < MAX_AI_WARS and random.random() < 0.12:
         free_pairs = [(a, b) for a, b in RIVALS
                       if not _in_war(a) and not _in_war(b)
+                      and not _has_leader(a) and not _has_leader(b)
                       and b not in _allies_flat(a)]
         if free_pairs:
             a, b = random.choice(free_pairs)
@@ -115,6 +122,12 @@ def tick() -> list:
     for line in out:
         news_add(line)
     return out
+
+
+def _has_leader(cid: str) -> bool:
+    """کشور با رهبرِ واقعی — دولت NPC دخالت نمی‌کند."""
+    return bool(db.one("SELECT 1 FROM users WHERE country=? AND is_leader=1 "
+                       "LIMIT 1", (cid,)))
 
 
 def _allies_flat(cid: str):
