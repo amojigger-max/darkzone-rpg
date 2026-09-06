@@ -432,9 +432,9 @@ def strike(uid, kind: str, count: int = 1) -> str:
         dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3) * dmg_mult))
         intercepted = random.random() < chance
         if intercepted:
-            lines.append(f"  {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")
+            lines.append(f"▫️ {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")
         else:
-            lines.append(f"  {texts.fa(n)}. 💥 برخورد! آسیب {texts.fa(dmg)}")
+            lines.append(f"▫️ {texts.fa(n)}. 💥 برخورد! آسیب {texts.fa(dmg)}")
             score_add += 3
         db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
               (random.randint(6, 14), uid, best["iid"]))
