@@ -6,13 +6,13 @@ import subprocess
 import time
 import traceback
 
-from aiogram import Bot, Dispatcher, DefaultBotProperties
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 import config
 import db
 import handlers
-import texts
 from game import economy, events, war
 
 _last = {}
@@ -109,7 +109,7 @@ async def main():
     dp.include_router(handlers.router)
 
     from aiogram import BaseMiddleware
-    from aiogram.types import CallbackQuery, Message
+    from aiogram.types import Message
 
     class Guard(BaseMiddleware):
         async def __call__(self, handler, event, data):
