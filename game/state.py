@@ -60,6 +60,7 @@ def card(uid) -> str:
     party = politics.my_party(uid)
     return "\n".join([
         t.hdr("پرونده‌ی نظامی", "🎖"),
+        t.STARS,
         t.row("نام", p["name"]),
         t.row("کشور", f"{c.get('flag','')} {c.get('name','—')}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
