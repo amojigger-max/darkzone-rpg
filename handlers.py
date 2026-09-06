@@ -13,6 +13,11 @@ import texts
 from game import ai, defense, economy, events, geo, guide, military, politics, quests, state, war
 
 router = Router()
+
+
+def handlers_bot():
+    """نمونه‌ی بات برای ویرایش پیام — از بیرون هم در دسترس."""
+    return globals().get("bot")
 bot: Bot = None
 
 
@@ -200,18 +205,30 @@ async def cb_admin(c: CallbackQuery):
 
 # ═══════════ 🧩 کیبوردها ═══════════
 
+def _taken(cid: str) -> bool:
+    """آیا این کشور در همین گروه گرفته شده؟ (هر گروه دنیای خودش)"""
+    return bool(db.one("SELECT 1 FROM users WHERE country=? LIMIT 1", (cid,)))
+
+
+def _cy_label(cid: str) -> str:
+    c = countries.COUNTRIES[cid]
+    mark = " ✓" if _taken(cid) else ""
+    return f"{c['flag']} {c['name']}{mark}"
+
+
 def kb_countries(page=0) -> InlineKeyboardMarkup:
     ids = list(countries.COUNTRIES)
     per, p = 10, page
     chunk = ids[p * per:(p + 1) * per]
+    if not chunk:
+        return InlineKeyboardMarkup(inline_keyboard=[])
     rows = []
     for a, b in zip(chunk[::2], chunk[1::2]):
-        ca, cb = countries.COUNTRIES[a], countries.COUNTRIES[b]
-        rows.append([InlineKeyboardButton(text=f"{ca['flag']} {ca['name']}", callback_data=f"cy:{a}"),
-                     InlineKeyboardButton(text=f"{cb['flag']} {cb['name']}", callback_data=f"cy:{b}")])
+        rows.append([InlineKeyboardButton(text=_cy_label(a), callback_data=f"cy:{a}"),
+                     InlineKeyboardButton(text=_cy_label(b), callback_data=f"cy:{b}")])
     if len(chunk) % 2:
-        c = countries.COUNTRIES[chunk[-1]]
-        rows.append([InlineKeyboardButton(text=f"{c['flag']} {c['name']}", callback_data=f"cy:{chunk[-1]}")])
+        rows.append([InlineKeyboardButton(text=_cy_label(chunk[-1]),
+                                          callback_data=f"cy:{chunk[-1]}")])
     nav = []
     if p > 0:
         nav.append(InlineKeyboardButton(text="◀️ صفحه قبل", callback_data=f"cyp:{p-1}"))
@@ -377,6 +394,10 @@ async def cb_country(c: CallbackQuery):
         await c.answer("قبلاً ثبت‌نام کردی.", show_alert=True)
         return
     cid = c.data.split(":")[1]
+    if _taken(cid):                       # ✓ کشور گرفته‌شده — در همین گروه
+        await c.answer("✓ این کشور قبلاً گرفته شده — کشور دیگری انتخاب کن",
+                       show_alert=True)
+        return
     ok = state.enlist(uid, cid, c.from_user.first_name or "سرباز")
     if not ok:
         await c.answer("خطا — دوباره امتحان کن.", show_alert=True)
@@ -637,9 +658,29 @@ async def fa_words(m: Message):
     if w in ("شروع",):
         return await cmd_start(m)
     if w in ("منو",):
-        return await m.answer(state.card(uid) if state.active(uid) else texts.WELCOME,
+        act = state.active(uid)
+        # 🔔 کول‌داون: تا ۱ دقیقه منوی تازه نمی‌آید — تگ روی منوی قبلی
+        last = (db.kv_get(f"menu:{uid}", "") or "").split(":")
+        if act and len(last) == 2 and db.now() - int(last[1]) < 60:
+            card = state.card(uid)
+            tag = texts.mention(uid, m.from_user.first_name or "بازیکن")
+            ok_edit = False
+            if handlers_bot():
+                with contextlib.suppress(Exception):
+                    await handlers_bot().edit_message_text(
+                        chat_id=m.chat.id, message_id=int(last[0]),
+                        text=f"🔔 {tag}\n\n{card}"[:4000],
+                        parse_mode="HTML", reply_markup=kb_main())
+                    ok_edit = True
+            if ok_edit:
+                return await m.answer("🔔 منوت همین‌جاست — یک دقیقه صبر کن برای منوی تازه",
+                                      parse_mode="HTML")
+        sent = await m.answer(state.card(uid) if act else texts.WELCOME,
                               parse_mode="HTML",
-                              reply_markup=kb_main() if state.active(uid) else kb_countries())
+                              reply_markup=kb_main() if act else kb_countries())
+        if act:
+            db.kv_set(f"menu:{uid}", f"{sent.message_id}:{db.now()}")
+        return sent
     if w in ("پروفایل", "کارنامه", "کارت"):
         return await m.answer(state.card(uid), parse_mode="HTML", reply_markup=kb_main())
     if w in ("ارتشی", "سرباز"):

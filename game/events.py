@@ -1,4 +1,5 @@
 """⚡ جنگ جهانی — رویداد زنده‌ی هر گروه + حلقه‌ی جهانی."""
+import contextlib
 import random
 
 import db
@@ -11,7 +12,7 @@ MAX_TRIES = 3
 TIPS = [
     ("جهان", "وضعیت همه‌ی کشورها و جنگ‌های فعال را ببین"),
     ("نقشه", "شهرهای اشغال‌شده و مرزهای جبهه‌ها"),
-    ("قدرت", "رتبه‌بندی نظامی ۲۱ کشور"),
+    ("قدرت", "رتبه‌بندی نظامی ۵۰ کشور"),
     ("مستعمره‌ها", "چه کشوری مستعمره‌ی کیست"),
     ("جیره", "دستمزد روزانه‌ات را بگیر"),
     ("رزم", "نبرد کن، غنیمت بگیر، ارتقا بگیر"),
@@ -81,6 +82,17 @@ def active_chats(minutes=45):
     rows = db.q("SELECT DISTINCT chat_id FROM users WHERE chat_id IS NOT NULL "
                 "AND chat_id < 0 AND last_active > ?", (cutoff,))
     return [r["chat_id"] for r in rows]
+
+
+def game_alive(gid: int, minutes: int = 45) -> bool:
+    """آیا این گروه بیدار است؟ (فعالیت تازه‌ی بازیکن دارد)"""
+    import db as _db
+    cutoff = _db.now() - minutes * 60
+    with contextlib.suppress(Exception):
+        r = _db.con_for(gid).execute(
+            "SELECT 1 FROM users WHERE last_active > ? LIMIT 1", (cutoff,)).fetchone()
+        return bool(r)
+    return False
 
 
 EVENTS = [

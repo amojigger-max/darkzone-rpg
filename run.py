@@ -43,46 +43,42 @@ def _too_fast(uid: int) -> bool:
 
 
 async def world_loop(bot: Bot):
-    """🌍 جهان زنده: بازار، نفت، جنگ‌ها، دولت هوشمند."""
+    """🌍 جهان زنده‌ی هر گروه: بازار، نفت، جنگ‌ها، دولت هوشمند — دنیاهای جدا."""
     await asyncio.sleep(20)
     print("🌍 world_loop alive", flush=True)
     while True:
         try:
-            w = economy.tick()
-            economy.oil_income()
-            economy.world()
-            news = _news(w)
-            if news:
-                for cid in events.active_chats():
+            for g in db.list_games():
+                db.GAME.set(g)
+                if not events.game_alive(g):
+                    continue                     # گروه خفته — جهانش هم می‌خوابد
+                w = economy.tick()
+                economy.oil_income()
+                economy.world()
+                news = _news(w)
+                if news:
                     with contextlib.suppress(Exception):
-                        await bot.send_message(cid, news, parse_mode="HTML")
-            for msg in war.settle():
-                gid = db.kv_get("main_group")
-                if gid:
+                        await bot.send_message(g, news, parse_mode="HTML")
+                for msg in war.settle():
                     with contextlib.suppress(Exception):
-                        await bot.send_message(int(gid), msg, parse_mode="HTML")
-            # 🧠 مغز جهان — کشورها مستقل عمل می‌کنند و جهان پاسخ می‌دهد
-            for line in ai.tick():
-                gid = db.kv_get("main_group")
-                targets = {int(gid)} if gid else set()
-                targets.update(events.active_chats())
-                for cid in targets:
+                        await bot.send_message(g, msg, parse_mode="HTML")
+                # 🧠 مغز جهان — کشورها مستقل عمل می‌کنند
+                for line in ai.tick():
                     with contextlib.suppress(Exception):
-                        await bot.send_message(cid, line, parse_mode="HTML")
-            # دولت هوشمند: خبرگزاری جهان
-            if w["inflation"] > 1.0 and db.now() % 600 < 70:
-                gid = db.kv_get("main_group")
-                if gid:
+                        await bot.send_message(g, line, parse_mode="HTML")
+                # خبرگزاری تورم
+                if w["inflation"] > 1.0 and db.now() % 600 < 70:
                     with contextlib.suppress(Exception):
                         import texts as _t
                         await bot.send_message(
-                            int(gid),
+                            g,
                             _t.fa(f"📊 خبرگزاری: تورم جهانی به {w['inflation'] * 100:.0f}٪ رسید — "
                                   f"دلار ×{w['dollar']:.2f} · نفت ${w['oil']:.0f}"),
                             parse_mode="HTML")
             await asyncio.sleep(60)
         except Exception:
-            db.log("error", "world_loop: " + traceback.format_exc()[-300:])
+            with contextlib.suppress(Exception):
+                db.log("error", "world_loop: " + traceback.format_exc()[-300:])
             await asyncio.sleep(60)
 
 
@@ -93,56 +89,53 @@ async def events_loop(bot: Bot):
     while True:
         try:
             now = db.now()
-            # 📰 خبرنامه‌ی هر ۱۰ دقیقه — قابل تنظیم توسط مالک: «تنظیم اخبار»
-            if (not db.kv_get("bl_off")
-                    and now - int(db.kv_get("bl_last", "0")) >= 600):
-                db.kv_set("bl_last", str(now))
-                bl = events.bulletin()
-                targets = set(events.active_chats())
-                gid = db.kv_get("main_group")
-                if gid:
-                    targets.add(int(gid))
-                for cid in targets:
+            for g in db.list_games():
+                if not events.game_alive(g):
+                    continue
+                db.GAME.set(g)
+                # 📰 خبرنامه‌ی هر ۱۰ دقیقه — قابل تنظیم: «تنظیم اخبار»
+                if (not db.kv_get("bl_off")
+                        and now - int(db.kv_get("bl_last", "0")) >= 600):
+                    db.kv_set("bl_last", str(now))
+                    bl = events.bulletin()
                     with contextlib.suppress(Exception):
-                        await bot.send_message(cid, bl, parse_mode="HTML")
-            if not db.kv_get("ev_off"):
-                for cid in events.active_chats():
-                    ev = events.maybe_event(cid)
+                        await bot.send_message(g, bl, parse_mode="HTML")
+                if not db.kv_get("ev_off"):
+                    ev = events.maybe_event(g)
                     if ev:
                         with contextlib.suppress(Exception):
-                            await bot.send_message(cid, ev, parse_mode="HTML")
+                            await bot.send_message(g, ev, parse_mode="HTML")
             await asyncio.sleep(45)
         except Exception:
-            db.log("error", "events_loop: " + traceback.format_exc()[-300:])
+            with contextlib.suppress(Exception):
+                db.log("error", "events_loop: " + traceback.format_exc()[-300:])
             await asyncio.sleep(45)
 
 
 async def autosave_loop():
-    """💾 ذخیره‌ی دوره‌ی دیتابیس — هر ۵ دقیقه از طریق API گیت‌هاب."""
+    """💾 ذخیره‌ی همه‌ی دنیاها — هر ۵ دقیقه از طریق API گیت‌هاب."""
     if not os.environ.get("INLOOP_AUTOSAVE"):
         return
     import hashlib
     import save_db
     iv = int(os.environ.get("AUTOSAVE_MIN", "5")) * 60
     pat = os.environ.get("PAT", "")
-    last = {"h": None}
+    last = {}
     while True:
         await asyncio.sleep(iv)
-        try:
-            data = save_db.checkpoint()
-            h = hashlib.sha256(data).hexdigest()
-            if h == last["h"]:
-                continue                      # تغییری نکرده
-            if save_db.put(pat, data):
-                last["h"] = h
-                db.log("info", "autosave ok")
-                print("💾 autosave ok", flush=True)
-            else:
-                db.log("error", "autosave put failed")
-                print("autosave put failed", flush=True)
-        except Exception:
-            db.log("error", "autosave failed: " + traceback.format_exc()[-200:])
-            print("autosave failed:", traceback.format_exc()[-300:], flush=True)
+        for g in db.list_games():
+            try:
+                data = save_db.checkpoint(db.game_path(g))
+                h = hashlib.sha256(data).hexdigest()
+                if last.get(g) == h:
+                    continue                  # تغییری نکرده
+                if save_db.put(pat, data, db.game_path(g)):
+                    last[g] = h
+                    print(f"💾 autosave ok {g}", flush=True)
+                else:
+                    print(f"autosave put failed {g}", flush=True)
+            except Exception:
+                print("autosave failed:", traceback.format_exc()[-300:], flush=True)
 
 
 async def main():
@@ -165,6 +158,12 @@ async def main():
 
     class Guard(BaseMiddleware):
         async def __call__(self, handler, event, data):
+            # 🌍 دنیای این پیام = همین گروه — همه‌چیز جدا
+            chat = getattr(event, "chat", None)
+            if chat is None:
+                chat = getattr(getattr(event, "message", None), "chat", None)
+            if chat is not None and getattr(chat, "id", 0) < 0:
+                db.GAME.set(chat.id)
             who = getattr(event, "from_user", None)
             if who and who.id != config.OWNER_ID and _too_fast(who.id):
                 if isinstance(event, Message):
@@ -202,7 +201,7 @@ async def main():
     with contextlib.suppress(Exception):
         from aiogram.types import BotCommand
         await bot.set_my_commands([BotCommand(
-            command="start", description="⚔️ شروع جنگ جهانی — ۲۱ کشور، مستعمره، پول زنده")])
+            command="start", description="⚔️ شروع جنگ جهانی — ۵۰ کشور، مستعمره، پول زنده")])
     db.log("info", f"boot WW @{me.username}")
     print(f"⚔️ جنگ جهانی online as @{me.username}", flush=True)
 

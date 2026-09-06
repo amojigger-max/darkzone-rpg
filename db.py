@@ -8,25 +8,90 @@ from datetime import datetime, timezone, timedelta
 
 import config
 
-_local = threading.local()
 TZ = timezone(timedelta(hours=3), "Tehran")
+
+# 🌍 جداسازی گروه‌ها — هر گروه دنیای خودش: games/<شناسه‌ی گروه>.db
+import contextvars
+import os
+
+GAME = contextvars.ContextVar("game", default=None)   # شناسه‌ی گروهِ جاری
+GAMES_DIR = "games"
+_conns = {}                                            # مسیر → اتصال
 
 
 def now() -> int:
     return int(time.time())
 
 
+def game_path(chat_id) -> str:
+    return f"{GAMES_DIR}/{chat_id}.db"
+
+
+def list_games():
+    """همه‌ی دنیاهای موجود (شناسه‌ی گروه‌ها)."""
+    if not os.path.isdir(GAMES_DIR):
+        return []
+    return sorted(int(f[:-3]) for f in os.listdir(GAMES_DIR) if f.endswith(".db"))
+
+
 def con():
-    c = getattr(_local, "con", None)
+    g = GAME.get()
+    p = game_path(g) if g is not None else config.DB_PATH
+    c = _conns.get(p)
     if c is None:
-        c = sqlite3.connect(config.DB_PATH, 30)
+        if g is not None:
+            os.makedirs(GAMES_DIR, exist_ok=True)
+        c = sqlite3.connect(p, 30)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
         c.execute("PRAGMA synchronous=NORMAL")
         c.execute("PRAGMA busy_timeout=8000")
         c.execute("PRAGMA temp_store=MEMORY")
-        _local.con = c
+        _open_db(c)
+        _conns[p] = c
     return c
+
+
+def _open_db(c):
+    """اسکیما + مهاجرت + ایندکس — روی هر دیتابیس."""
+    c.executescript(SCHEMA)
+    with contextlib.suppress(Exception):
+        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    c.executescript("""
+CREATE INDEX IF NOT EXISTS ix_users_country ON users(country);
+CREATE INDEX IF NOT EXISTS ix_users_active ON users(last_active);
+CREATE INDEX IF NOT EXISTS ix_users_level ON users(level DESC);
+CREATE INDEX IF NOT EXISTS ix_wars_status ON wars(status);
+CREATE INDEX IF NOT EXISTS ix_inv_uid ON inventory(uid);
+""")
+    c.commit()
+
+
+def _migrate_legacy():
+    """دنیای قدیمیِ واحد → دنیای گروه اصلی."""
+    if not os.path.exists("worldwar.db") or list_games():
+        return
+    chat = None
+    try:
+        lc = sqlite3.connect("worldwar.db")
+        r = lc.execute("SELECT v FROM kv WHERE k='main_group'").fetchone()
+        if r:
+            chat = int(r[0])
+        else:
+            r = lc.execute("SELECT chat_id FROM users WHERE chat_id IS NOT NULL "
+                           "AND chat_id < 0 LIMIT 1").fetchone()
+            if r:
+                chat = int(r[0])
+        lc.close()
+    except Exception:
+        pass
+    if chat is None:
+        return
+    os.makedirs(GAMES_DIR, exist_ok=True)
+    os.replace("worldwar.db", game_path(chat))
+    for ext in ("-wal", "-shm"):
+        if os.path.exists("worldwar.db" + ext):
+            os.replace("worldwar.db" + ext, game_path(chat) + ext)
 
 
 SCHEMA = """
@@ -89,26 +154,37 @@ CREATE TABLE IF NOT EXISTS logs (
 
 
 def init(path: str = None):
-    if path:
-        import config as _c
-        _c.DB_PATH = path
+    if path:                       # تست‌ها: مسیر صریح (تک‌دنیا)
+        for p, c in list(_conns.items()):
+            with contextlib.suppress(Exception):
+                c.close()
+        _conns.clear()
         config.DB_PATH = path
-        if getattr(_local, "con", None):
-            _local.con.close()
-            _local.con = None
-    con().executescript(SCHEMA)
-    # مهاجرت آرام — دیتابیس‌های قدیمی ستون تازه را می‌گیرند
-    with contextlib.suppress(Exception):
-        con().execute("ALTER TABLE users ADD COLUMN username TEXT")
-    # ⚡ ایندکس‌های سرعت — ۱۰۰۰ بازیکن همزمان
-    con().executescript("""
-CREATE INDEX IF NOT EXISTS ix_users_country ON users(country);
-CREATE INDEX IF NOT EXISTS ix_users_active ON users(last_active);
-CREATE INDEX IF NOT EXISTS ix_users_level ON users(level DESC);
-CREATE INDEX IF NOT EXISTS ix_wars_status ON wars(status);
-CREATE INDEX IF NOT EXISTS ix_inv_uid ON inventory(uid);
-""")
-    con().commit()
+    else:                          # بوت تولید: دنیای قدیمی + همه‌ی دنیاها
+        _migrate_legacy()
+        for g in list_games():
+            with contextlib.suppress(Exception):
+                _open_db(con_for(g))
+    if not path:
+        return
+    _open_db(con())
+
+
+def con_for(chat_id):
+    """اتصال به دنیای مشخص — برای حلقه‌ها و ذخیره‌سازی."""
+    os.makedirs(GAMES_DIR, exist_ok=True)
+    p = game_path(chat_id)
+    c = _conns.get(p)
+    if c is None:
+        c = sqlite3.connect(p, 30)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
+        c.execute("PRAGMA busy_timeout=8000")
+        c.execute("PRAGMA temp_store=MEMORY")
+        _open_db(c)
+        _conns[p] = c
+    return c
 
 
 def ex(sql, args=()):
