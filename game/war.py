@@ -85,6 +85,106 @@ def call_help(leader_uid: int) -> str:
     return f"🆘 اتحاد پاسخ داد!\n{names}\n⚔️ +{boost} امتیاز جبهه — اتحادیان وارد شدند."
 
 
+# ═══════════ صلح ═══════════
+
+def peace_request(uid) -> str:
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        return "👑 فقط رهبر کشور."
+    wr = war_of(p["country"])
+    if not wr:
+        return "🕊 کشورت در جنگ نیست."
+    db.kv_set(f"peace:{wr['id']}", p["country"])
+    other = _enemy(p["country"], wr)
+    oc = countries.COUNTRIES[other]
+    return (f"🕊 درخواست صلح به {oc['flag']} {oc['name']} ارسال شد.\n"
+            f"رهبر آن کشور باید بنویسد: <code>قبول صلح</code>")
+
+
+def peace_accept(uid) -> str:
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        return "👑 فقط رهبر کشور."
+    wr = war_of(p["country"])
+    if not wr:
+        return "🕊 جنگی نیست."
+    if db.kv_get(f"peace:{wr['id']}") != _enemy(p["country"], wr):
+        return "⛔ درخواست صلحی از طرف مقابل نیست."
+    db.ex("UPDATE wars SET status='peace' WHERE id=?", (wr["id"],))
+    db.kv_set(f"peace:{wr['id']}", "")
+    a, b = countries.COUNTRIES[wr["a"]], countries.COUNTRIES[wr["b"]]
+    return (f"🕊 <b>پیمان صلح!</b>\n{a['flag']} {a['name']} ⇄ {b['flag']} {b['name']}\n"
+            f"جنگ پایان یافت — بازار نفس کشید.")
+
+
+# ═══════════ نبرد تن‌به‌تن (PvP) ═══════════
+
+def duel_request(uid, target_name, target_uid=None) -> str:
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    if target_uid and target_uid == uid:
+        return "🤡 با خودت؟"
+    c = countries.COUNTRIES[p["country"]]
+    import json
+    db.kv_set(f"duel:{'last'}", json.dumps(dict(a=uid, b=target_uid,
+                                                ts=db.now()), ensure_ascii=False))
+    t = texts
+    return "\n".join([
+        t.hdr("چالش نبرد", "⚔️"),
+        f"🇮🇷 {t.mention(uid, p['name'] or 'سرباز')} از {c['name']} چالش داد!",
+        f"🎯 حریف: <b>{target_name}</b>",
+        t.K,
+        "حریف باید بنویسد: «قبول نبرد» — تا ۵ دقیقه!"])
+
+
+def duel_accept(uid) -> str:
+    import json
+    d = db.jload(db.kv_get("duel:last"), None)
+    if not d or d.get("b") not in (None, uid) or db.now() - d.get("ts", 0) > 300:
+        return "⛔ چالشی در کار نیست (یا مهلتش گذشت)."
+    if d["a"] == uid:
+        return "🤡 خودت چالش دادی!"
+    from game import military
+    a, b = state.active(d["a"]), state.active(uid)
+    if not a or not b:
+        return "⛔ یکی از طرف‌ها سرباز نیست."
+    if not a["branch"] or not b["branch"]:
+        return "🪖 هر دو باید عضو شاخه نظامی باشند."
+    ca, cb = countries.COUNTRIES[a["country"]], countries.COUNTRIES[b["country"]]
+    _, _, aatk, adef = military.loadout(a["uid"])
+    _, _, batk, bdef = military.loadout(b["uid"])
+    ahp, bhp = a["hp"], b["hp"]
+    t = texts
+    lines = [t.hdr("نبرد تن‌به‌تن", "⚔️"),
+             f"{ca['flag']} {t.mention(a['uid'], a['name'] or 'سرباز')} ⚔️ "
+             f"{cb['flag']} {t.mention(b['uid'], b['name'] or 'سرباز')}",
+             f"⚔️ {aatk + 10} و 🛡 {adef + 9} ← VS → ⚔️ {batk + 10} و 🛡 {bdef + 9}",
+             t.K]
+    turn = 0
+    while turn < 10 and ahp > 0 and bhp > 0:
+        turn += 1
+        da = max(4, int((aatk + 10 + a["level"] * 2) * random.uniform(0.7, 1.2)) - bdef // 2)
+        db_ = max(4, int((batk + 10 + b["level"] * 2) * random.uniform(0.7, 1.2)) - adef // 2)
+        bhp -= da
+        ahp -= db_
+        lines.append(f"{turn}. ⚔️ −{da} | 🛡 −{db_}")
+    winner, loser = (a, b) if bhp <= 0 < ahp or ahp > bhp else (b, a)
+    if ahp <= 0 and bhp <= 0:
+        lines.append("💀 هر دو زمین خوردند — مساوی!")
+        db.kv_set("duel:last", "")
+        return "\n".join(lines)
+    prize = 600
+    db.ex("UPDATE users SET money=money+?, kills=kills+1 WHERE uid=?", (prize, winner["uid"]))
+    db.ex("UPDATE users SET hp=MAX(15,hp-30) WHERE uid=?", (loser["uid"],))
+    state.gain_xp(winner["uid"], 150)
+    wc = countries.COUNTRIES[winner["country"]]
+    lines.append(f"🏆 {wc['flag']} {t.mention(winner['uid'], winner['name'] or 'سرباز')} "
+                 f"پیروز شد! 💰 {prize:,} · ⭐ ۱۵۰ XP")
+    db.kv_set("duel:last", "")
+    return "\n".join(lines)
+
+
 # ═══════════ جنگ ═══════════
 
 def declare(leader_uid: int, target: str) -> str:

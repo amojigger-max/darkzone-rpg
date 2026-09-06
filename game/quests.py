@@ -1,0 +1,83 @@
+"""🎯 جنگ جهانی — مأموریت‌های روزانه: هدف، پیشرفت، جایزه."""
+import random
+
+import db
+import texts
+
+POOL = [
+    ("رزم", 3, "⚔️ سه نبرد رزمی انجام بده", 800),
+    ("پیروزی", 2, "🏆 دو پیروزی رزمی بگیر", 1000),
+    ("جیره", 1, "🍞 جیره‌ی روزانه را بگیر", 400),
+    ("جاسوسی", 1, "🕵 یک عملیات جاسوسی انجام بده", 900),
+    ("خرید", 1, "🛒 یک تجهیز بخر", 600),
+]
+
+
+def quest_state(uid) -> dict:
+    day = db.now() // 86400
+    st = db.jload(db.kv_get(f"quest:{uid}"), None) or {}
+    if st.get("day") != day:
+        goals = random.sample(POOL, k=3)
+        st = dict(day=day, goals=[dict(key=g[0], need=g[1], label=g[2], prize=g[3],
+                                       done=0, claimed=False) for g in goals])
+        import json
+        db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
+    return st
+
+
+def on_event(uid, key: str):
+    """قلاب پیشرفت: از رزم/جاسوسی/خرید/جیره صدا زده می‌شود."""
+    st = quest_state(uid)
+    ch = False
+    for g in st["goals"]:
+        if g["key"] == key and g["done"] < g["need"]:
+            g["done"] += 1
+            ch = True
+    if ch:
+        import json
+        db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
+
+
+def view(uid) -> str:
+    st = quest_state(uid)
+    t = texts
+    lines = [t.hdr("مأموریت‌های روزانه", "🎯"), ""]
+    all_done = True
+    for g in st["goals"]:
+        mark = "✅" if g["done"] >= g["need"] else "⏳"
+        lines.append(f"{mark} {g['label']} — {str(g['done']).translate(FA)} از "
+                     f"{str(g['need']).translate(FA)}")
+        if g["done"] < g["need"]:
+            all_done = False
+    lines += [t.K]
+    if all_done:
+        total = sum(g["prize"] for g in st["goals"])
+        lines.append(f"🎁 همه کامل! جایزه: 💰 {total:,} — «جایزه» را بگیر")
+    else:
+        lines.append("جایزه‌ی هر هدف فقط با «جایزه» پس از کامل شدن")
+    return "\n".join(lines)
+
+
+FA = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+
+def claim(uid) -> str:
+    st = quest_state(uid)
+    from game import state
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    total, any_pending = 0, False
+    for g in st["goals"]:
+        if g["done"] >= g["need"] and not g["claimed"]:
+            g["claimed"] = True
+            total += g["prize"]
+            any_pending = True
+    if not any_pending:
+        return "⏳ هنوز هدف کاملی برای دریافت نیست — «مأموریت»"
+    import json
+    db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
+    db.ex("UPDATE users SET money=money+? WHERE uid=?", (total, uid))
+    state.gain_xp(uid, total // 3)
+    return (f"🎁 جایزه‌ی مأموریت: 💰 {total:,}\n"
+            f"خزانه: {state.get(uid)['money']:,}")

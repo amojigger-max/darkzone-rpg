@@ -71,7 +71,27 @@ def card(uid) -> str:
         t.row("عملیات جاسوسی", p["spy_ops"]),
         t.row("حزب", party["name"] if party else "—"),
         t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else ("عضو حزب" if party else "شهروند")),
+        medals(uid),
     ])
+
+
+def medals(uid) -> str:
+    """نشان‌ها بر اساس دستاورد واقعی."""
+    p = get(uid)
+    if not p:
+        return ""
+    out = []
+    if p["kills"] >= 10:
+        out.append("🥇 نشان شجاعت")
+    if p["spy_ops"] >= 5:
+        out.append("🕵 نشان جاسوس")
+    if p["level"] >= 5:
+        out.append("🎖 افسر")
+    if p["level"] >= 10:
+        out.append("⭐ فرمانده")
+    if int(db.kv_get(f"streak:{uid}", "0")) >= 5:
+        out.append("🔥 سرباز وفادار")
+    return "🏅 " + " · ".join(out) if out else ""
 
 
 def ration(uid) -> str:
@@ -92,6 +112,8 @@ def ration(uid) -> str:
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (amount, uid))
     db.kv_set(f"ration:{uid}", str(day))
     db.kv_set(f"streak:{uid}", str(streak))
+    from game import quests
+    quests.on_event(uid, "جیره")
     import random as _r
     bonus = ""
     if streak >= 3 and _r.random() < 0.35:

@@ -15,6 +15,20 @@ import db
 import handlers
 from game import economy, events, war
 
+NEWS_TMPL = [
+    ("📡 خبرگزاری جهانی: شاخص دلار به ×{dollar:.2f} رسید — تحلیلگران نگران‌اند.", "dollar"),
+    ("🛢 قیمت نفت ${oil:.0f} شد — بازارهای جهانی واکنش نشان دادند.", "oil"),
+    ("📊 تورم جهانی {inf:.1f}٪ — بانک‌های مرکزی هشدار دادند.", "inflation"),
+]
+
+
+def _news(w) -> str | None:
+    import random
+    if random.random() > 0.18:          # هر تیک ۶۰ ثانیه → ~۱۰ دقیقه یک خبر
+        return None
+    tpl, key = random.choice(NEWS_TMPL)
+    return tpl.format(dollar=w["dollar"], oil=w["oil"], inf=w["inflation"] * 100)
+
 _last = {}
 
 
@@ -36,6 +50,11 @@ async def world_loop(bot: Bot):
             w = economy.tick()
             economy.oil_income()
             economy.world()
+            news = _news(w)
+            if news:
+                for cid in events.active_chats():
+                    with contextlib.suppress(Exception):
+                        await bot.send_message(cid, news, parse_mode="HTML")
             for msg in war.settle():
                 gid = db.kv_get("main_group")
                 if gid:

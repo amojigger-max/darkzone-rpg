@@ -9,7 +9,7 @@ from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton,
 import countries
 import db
 import texts
-from game import economy, events, geo, military, politics, state, war
+from game import economy, events, geo, military, politics, quests, state, war
 
 router = Router()
 bot: Bot = None
@@ -71,6 +71,10 @@ def kb_mil() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🔧 تعمیر", callback_data="mn:repair")],
         [InlineKeyboardButton(text="🎖 عضویت نظامی", callback_data="mn:branch"),
          InlineKeyboardButton(text="🍞 جیره", callback_data="mn:ration")],
+        [InlineKeyboardButton(text="🎯 مأموریت روزانه", callback_data="mn:quest"),
+         InlineKeyboardButton(text="🏴‍☠ بازار سیاه", callback_data="mn:black")],
+        [InlineKeyboardButton(text="⬆️ ارتقای تجهیزات", callback_data="mn:upgrade"),
+         InlineKeyboardButton(text="⚔️ نبرد تن‌به‌تن", callback_data="mn:duel")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -82,6 +86,8 @@ def kb_pol() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🤝 اتحاد", callback_data="mn:ally")],
         [InlineKeyboardButton(text="⚔️ جنگ و حمله", callback_data="mn:war"),
          InlineKeyboardButton(text="📰 بیانیه", callback_data="mn:stmt")],
+        [InlineKeyboardButton(text="🕊 درخواست صلح", callback_data="mn:peace"),
+         InlineKeyboardButton(text="🆘 کمک اتحاد", callback_data="mn:help")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -263,6 +269,36 @@ async def cb_menu(c: CallbackQuery):
     elif what == "map":
         p = state.active(uid)
         await _edit(c, geo.country_map(p["country"]) if p else "⛔ اول «شروع»", kb_world())
+    elif what == "quest":
+        await _edit(c, quests.view(uid), kb_mil())
+    elif what == "black":
+        await _edit(c, military.blackmarket(uid), kb_mil())
+    elif what == "upgrade":
+        p = state.active(uid)
+        if not p:
+            await _edit(c, "⛔ اول «شروع»", kb_mil())
+        else:
+            own = db.q("SELECT iid FROM inventory WHERE uid=?", (uid,))
+            rows = []
+            for r in own:
+                it = countries.ITEMS[r["iid"]]
+                lvl = military.item_level(uid, r["iid"])
+                rows.append([InlineKeyboardButton(
+                    text=f"{it[1]} {it[0]} — سطح {lvl}" + (" (مکس)" if lvl >= 3 else " ⬆️"),
+                    callback_data=f"up:{r['iid']}")])
+            rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+            await _edit(c, texts.hdr("ارتقای تجهیزات", "⬆️") + "\n\nتجهیزات خودت:",
+                        InlineKeyboardMarkup(inline_keyboard=rows))
+    elif what == "duel":
+        await _edit(c, "⚔️ <b>نبرد تن‌به‌تن</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+                      "در گروه بنویس: <code>نبرد نام‌حریف</code>\n"
+                      "مثال: <code>نبرد علی</code>\n\nحریف ۵ دقیقه فرصت دارد "
+                      "با «قبول نبرد» جواب بدهد.\nجایزه: 💰 ۶۰۰ · ⭐ ۱۵۰ XP",
+                    kb_mil())
+    elif what == "peace":
+        await _edit(c, war.peace_request(uid), kb_pol())
+    elif what == "help":
+        await _edit(c, war.call_help(uid), kb_pol())
     await c.answer()
 
 
@@ -304,6 +340,13 @@ async def cb_buy(c: CallbackQuery):
         await c.answer("✅ از قبل داری", show_alert=True)
     await c.message.edit_text(military.arsenal(uid), parse_mode="HTML",
                               reply_markup=kb_arsenal(uid))
+
+
+@router.callback_query(F.data.startswith("up:"))
+async def cb_upgrade(c: CallbackQuery):
+    await c.message.edit_text(military.upgrade(c.from_user.id, c.data.split(":")[1]),
+                              parse_mode="HTML", reply_markup=kb_mil())
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("spy:"))
@@ -445,6 +488,17 @@ async def fa_words(m: Message):
                               parse_mode="HTML", reply_markup=kb_world())
     if w == "راهنما":
         return await m.answer(texts.HELP, parse_mode="HTML", reply_markup=kb_main())
+
+
+def _find_item(txt: str):
+    txt = (txt or "").strip()
+    for iid, it in countries.ITEMS.items():
+        if txt in (it[0], iid):
+            return iid
+    for iid, it in countries.ITEMS.items():
+        if txt and it[0] in txt:
+            return iid
+    return None
 
 
 def _find_country(txt: str):

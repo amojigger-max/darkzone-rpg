@@ -68,7 +68,75 @@ def buy(uid, iid: str) -> str:
         return f"💰 پول کم داری — لازم: {it[5]:,} · داری: {p['money']:,}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (it[5], uid))
     db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
+    from game import quests
+    quests.on_event(uid, "خرید")
     return f"🛒 <b>{it[0]}</b> {it[1]} خریداری شد — دوام ۱۰۰٪"
+
+
+def blackmarket(uid) -> str:
+    """بازار سیاه — تجهیزات کشورهای دیگر با قیمت ۱.۷ برابر."""
+    from game import economy
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    import random as _r
+    _r.seed(db.now() // 3600 + uid)      # هر ساعت تغییر
+    foreign = [iid for iid, it in countries.ITEMS.items()
+               if it[2] != p["country"]]
+    sample = _r.sample(foreign, k=min(8, len(foreign)))
+    lines = [texts.hdr("بازار سیاه", "🏴‍☠"), "قیمت ×۱.۷ — قاچاق است، رسمی نیست!", ""]
+    for iid in sample:
+        it = countries.ITEMS[iid]
+        price = int(economy.real_price(it[5]) * 1.7)
+        c = countries.COUNTRIES[it[2]]
+        own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
+        mark = "✅" if own else f"💰{price // 1000}k"
+        lines.append(f"{it[1]} {it[0]} ({c['flag']}) — {mark}")
+    lines += ["", "خرید: «خریدسیاه نام» — مثال: <code>خریدسیاه f35</code>"]
+    return "\n".join(lines)
+
+
+def buy_black(uid, iid: str) -> str:
+    from game import economy
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    it = countries.ITEMS.get(iid)
+    if not it or it[2] == p["country"]:
+        return "⛔ این تجهیز در بازار سیاه نیست (یا مال کشور خودت است — «تجهیزات»)"
+    if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
+        return "✅ از قبل داری."
+    price = int(economy.real_price(it[5]) * 1.7)
+    if p["money"] < price:
+        return f"💰 پول کم — لازم: {price:,} · داری: {p['money']:,}"
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
+    db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
+    return f"🏴‍☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
+
+
+def item_level(uid, iid: str) -> int:
+    return int(db.kv_get(f"itlvl:{uid}:{iid}", "1"))
+
+
+def upgrade(uid, iid: str) -> str:
+    """ارتقای تجهیز — ۳ سطح، هر سطح +۲۵٪ قدرت."""
+    from game import economy
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    it = countries.ITEMS.get(iid)
+    if not it or not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
+        return "⛔ این تجهیز را نداری."
+    lvl = item_level(uid, iid)
+    if lvl >= 3:
+        return "⭐ تجهیز در حداکثر سطح (۳) است."
+    cost = int(economy.real_price(it[5]) * 0.6 * lvl)
+    if p["money"] < cost:
+        return f"💰 ارتقا {cost:,} می‌ارزد — داری: {p['money']:,}"
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
+    db.kv_set(f"itlvl:{uid}:{iid}", str(lvl + 1))
+    return (f"⬆️ <b>{it[0]}</b> ارتقا یافت به سطح {lvl + 1} — "
+            f"قدرت +{25 * (lvl + 1)}٪\nهزینه: {cost:,}")
 
 
 def repair(uid) -> str:
@@ -97,11 +165,14 @@ def loadout(uid):
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=? AND n.dur>10", (uid,))
     if not rows:
         return None, None, 0, 0
-    best_a = max(rows, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100)
-    best_d = max(rows, key=lambda r: countries.ITEMS[r["iid"]][4] * r["dur"] // 100)
+    best_a = max(rows, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
+                 * item_level(uid, r["iid"]))
+    best_d = max(rows, key=lambda r: countries.ITEMS[r["iid"]][4] * r["dur"] // 100
+                 * item_level(uid, r["iid"]))
     a = countries.ITEMS[best_a["iid"]]
     d = countries.ITEMS[best_d["iid"]]
-    return a, d, a[3] * best_a["dur"] // 100, d[4] * best_d["dur"] // 100
+    return a, d, (a[3] * best_a["dur"] // 100) * item_level(uid, best_a["iid"]), \
+        (d[4] * best_d["dur"] // 100) * item_level(uid, best_d["iid"])
 
 
 # ═══════════ رزم ═══════════
@@ -150,6 +221,9 @@ def battle(uid, tier: int = None) -> str:
         db.ex("UPDATE users SET money=money+?, kills=kills+1, hp=MAX(20,hp) WHERE uid=?",
               (loot, uid))
         state.gain_xp(uid, xp)
+        from game import quests
+        quests.on_event(uid, "رزم")
+        quests.on_event(uid, "پیروزی")
         return "\n".join([
             t.hdr("پیروزی در رزم", "🏆"),
             t.row("دشمن", name), "",

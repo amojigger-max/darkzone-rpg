@@ -137,6 +137,8 @@ def spy(uid, target: str) -> str:
     my = countries.COUNTRIES[p["country"]]
     chance = 0.35 + (my["tech"] - tc["tech"]) * 0.12
     db.ex("UPDATE users SET spy_ops=spy_ops+1 WHERE uid=?", (uid,))
+    from game import quests
+    quests.on_event(uid, "جاسوسی")
     if random.random() < chance:
         info = random.choice([
             f"📅 برنامه‌ی رزمی {tc['name']} لو رفت — حمله در راه است",
