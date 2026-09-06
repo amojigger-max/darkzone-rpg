@@ -24,7 +24,7 @@ def found(uid, name: str, ideology: str) -> str:
     if not p:
         return "⛔ اول «شروع»"
     if not p["branch"]:
-        return "🪖 ساخت حزب نیازمند عضویت نظامی است — «ارتچی»"
+        return "🪖 ساخت حزب نیازمند عضویت نظامی است — «ارتشی»"
     if my_party(uid):
         return "🔒 قبلاً در حزبی هستی."
     if len(name) < 3 or len(name) > 28:

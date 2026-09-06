@@ -44,7 +44,9 @@ def arsenal(uid) -> str:
     if not p:
         return "⛔ اول «شروع»"
     c = countries.COUNTRIES[p["country"]]
-    lines = [texts.hdr(f"زرادخانه {c['name']}", "🛒"), ""]
+    sp = countries.spec_of(p["country"])
+    lines = [texts.hdr(f"زرادخانه {c['name']}", "🛒"),
+             f"🎖 تخصص کشور: {sp[2]} — +{sp[1]}٪ در حمله‌ی {sp[0]}", ""]
     for iid in c["items"]:
         nm, em, _, atk, guard, price, _ = (None,) * 7
         it = countries.ITEMS[iid]
@@ -84,7 +86,7 @@ def blackmarket(uid) -> str:
     foreign = [iid for iid, it in countries.ITEMS.items()
                if it[2] != p["country"]]
     sample = _r.sample(foreign, k=min(8, len(foreign)))
-    lines = [texts.hdr("بازار سیاه", "🏴‍☠"), "قیمت ×۱.۷ — قاچاق است، رسمی نیست!", ""]
+    lines = [texts.hdr("بازار سیاه", "☠"), "قیمت ×۱.۷ — قاچاق است، رسمی نیست!", ""]
     for iid in sample:
         it = countries.ITEMS[iid]
         price = int(economy.real_price(it[5]) * 1.7)
@@ -111,7 +113,7 @@ def buy_black(uid, iid: str) -> str:
         return f"💰 پول کم — لازم: {price:,} · داری: {p['money']:,}"
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
     db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
-    return f"🏴‍☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
+    return f"☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
 
 
 def item_level(uid, iid: str) -> int:
@@ -177,8 +179,10 @@ def loadout(uid):
 
 # ═══════════ رزم ═══════════
 
-ENEMIES = [("شبه‌نظامی دشمن", 60, 10), ("گروه شناسایی", 90, 14), ("کاروان زرهی", 140, 20),
-           ("پایگاه مرزی", 200, 26), ("نیروی ویژه دشمن", 280, 34)]
+ENEMIES = [("گروه شبه‌نظامی", 60, 10), ("گروه شناسایی دشمن", 90, 14),
+           ("کاروان زرهی", 140, 20), ("پایگاه مرزی", 200, 26),
+           ("نیروی ویژه دشمن", 280, 34), ("تکاوران گارد ویژه", 360, 42),
+           ("لشکر مکانیزه", 460, 50), ("ستاد فرماندهی دشمن", 600, 60)]
 
 
 def battle(uid, tier: int = None) -> str:
@@ -187,7 +191,7 @@ def battle(uid, tier: int = None) -> str:
     if not p:
         return "⛔ اول «شروع»"
     if not p["branch"]:
-        return "🪖 اول به شاخه‌ای بپیوند — «ارتچی»"
+        return "🪖 اول به شاخه‌ای بپیوند — «ارتشی»"
     if db.now() - int(db.kv_get(f"battle:{uid}", "0")) < 20:
         return "⏳ ۲۰ ثانیه بین نبردها صبر کن."
     db.kv_set(f"battle:{uid}", str(db.now()))
@@ -195,13 +199,20 @@ def battle(uid, tier: int = None) -> str:
     name, ehp, eatk = ENEMIES[tier]
     a, d, atk, guard = loadout(uid)
     wpn = a[0] if a else "تفنگ سبک"
+    # 🎖 تخصص کشور در رزم
+    mspec, mpct, mname = countries.spec_of(p["country"])
+    spec_mult = 1 + mpct / 200          # نصف اثر در رزم
     log = []
     turn = 0
-    while turn < 12 and ehp > 0 and p["hp"] > 0:
+    while turn < 14 and ehp > 0 and p["hp"] > 0:
         turn += 1
-        dmg = max(4, int((atk + 10 + p["level"] * 3) * random.uniform(0.7, 1.3)))
+        dmg = max(4, int((atk + 10 + p["level"] * 3) * spec_mult
+                         * random.uniform(0.7, 1.3)))
+        crit = random.random() < 0.15   # 🎯 شلیک مرگبار
+        if crit:
+            dmg *= 2
         ehp -= dmg
-        log.append(f"⚔️ {wpn} → −{dmg}")
+        log.append(f"{'🎯 مرگبار! ' if crit else '⚔️ '}{wpn} → −{dmg}")
         if ehp <= 0:
             break
         edmg = max(3, int(eatk * random.uniform(0.6, 1.1)) - guard // 2)
@@ -226,7 +237,8 @@ def battle(uid, tier: int = None) -> str:
         quests.on_event(uid, "پیروزی")
         return "\n".join([
             t.hdr("پیروزی در رزم", "🏆"),
-            t.row("دشمن", name), "",
+            t.row("دشمن", name),
+            t.row("تخصص", f"🎖 {mname}"), "",
             *log[:6], "",
             t.row("غنیمت", f"💰 {loot:,} · ⭐ {xp} XP"),
             t.row("جان", f"❤️ {p['hp']}/{p['max_hp']}")])

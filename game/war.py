@@ -249,14 +249,26 @@ def strike(uid, kind: str, count: int = 1) -> str:
                     "WHERE u.country=?", (ecid,))
     def_pwr = sum(countries.ITEMS[r["iid"]][4] * r["dur"] // 100
                   for r in def_rows if kind_of(r["iid"]) == "پدافندی") + ec["mil"] * 6
+    # 🎖 تخصص پدافندیِ کشور دشمن
+    espec, epct, _ = countries.spec_of(ecid)
+    if espec == "پدافندی":
+        def_pwr = int(def_pwr * (1 + epct / 100))
+    # 🎖 تخصص کشور مهاجم در همین نوع حمله
+    mspec, mpct, _ = countries.spec_of(p["country"])
+    spec_mark = ""
+    spec_mult = 1
+    if mspec == kind:
+        spec_mark = f" 🎖 تخصص {countries.COUNTRIES[p['country']]['name']} فعال!"
+        spec_mult = 1 + mpct / 100
     t = texts
     lines = [t.hdr(f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
                                           "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
-             f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}", t.K]
+             f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}{spec_mark}",
+             t.K]
     score_add = 0
     for n in range(1, count + 1):
         base_dmg = it[3] * best["dur"] // 100 + p["level"] * 2
-        dmg = max(4, int(base_dmg * random.uniform(0.7, 1.3)))
+        dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3)))
         intercepted = random.random() < min(0.75, def_pwr / (def_pwr + dmg))
         if intercepted:
             lines.append(f"  {n}. 🛡 دفع شد — پدافند در آسمان نابودش کرد")

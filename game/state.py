@@ -22,12 +22,19 @@ def ensure(uid, name=None, chat_id=None):
 
 
 def enlist(uid, country: str, name: str) -> bool:
-    """ثبت‌نام در کشور — فقط یک بار."""
-    if get(uid):
-        return False
+    """ثبت‌نام در کشور — فقط یک بار (ردیفِ موجود بدون کشور را کامل می‌کند)."""
     import countries
     if country not in countries.COUNTRIES:
         return False
+    p = get(uid)
+    if p:
+        if p["country"]:
+            return False
+        db.ex("UPDATE users SET country=?, "
+              "money=CASE WHEN money>0 THEN money ELSE 2000 END, "
+              "name=CASE WHEN name='' OR name IS NULL THEN ? ELSE name END "
+              "WHERE uid=?", (country, texts.esc(name)[:32], uid))
+        return True
     db.ex("INSERT INTO users(uid,name,country,money,joined,last_active) VALUES(?,?,?,?,?,?)",
           (uid, texts.esc(name)[:32], country, 2000, db.now(), db.now()))
     return True
@@ -50,7 +57,7 @@ def gain_xp(uid, xp: int):
 
 def card(uid) -> str:
     import countries
-    p = get(uid)
+    p = active(uid)
     if not p:
         return "⛔ ثبت‌نام نکرده‌ای — «شروع»"
     c = countries.COUNTRIES.get(p["country"], {})
@@ -63,6 +70,8 @@ def card(uid) -> str:
         t.STARS,
         t.row("نام", p["name"]),
         t.row("کشور", f"{c.get('flag','')} {c.get('name','—')}"),
+        t.row("تخصص", f"🎖 {countries.spec_of(p['country'])[2]} — "
+                      f"+{countries.spec_of(p['country'])[1]}٪ {countries.spec_of(p['country'])[0]}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
         t.row("درجه", countries.rank_name(p["level"])),
         t.row("سطح / تجربه", f"{p['level']} · {p['xp']}/{xp_need(p['level'])}"),
