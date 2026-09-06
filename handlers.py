@@ -766,6 +766,20 @@ async def fa_words(m: Message):
             return await m.answer("🔎 الگو: <code>رهبر آیدی کشور</code> · خلع: <code>رهبر خالی کشور</code>",
                                   parse_mode="HTML")
         return await m.answer(_admin_leader(arg), parse_mode="HTML", reply_markup=kb_admin())
+    if w == "تنظیم":
+        if uid != config.OWNER_ID:
+            return await m.answer("👑 فقط مالک!", parse_mode="HTML")
+        if arg in ("اخبار", "خبرنامه"):
+            db.kv_set("bl_off", "" if db.kv_get("bl_off") else "1")
+        elif arg in ("رویداد", "رویدادها"):
+            db.kv_set("ev_off", "" if db.kv_get("ev_off") else "1")
+        bl = "خاموش ❌" if db.kv_get("bl_off") else "روشن ✅"
+        ev = "خاموش ❌" if db.kv_get("ev_off") else "روشن ✅"
+        return await m.answer("\n".join([
+            texts.hdr("تنظیمات ربات", "🎛"),
+            f"📰 خبرنامه‌ی هر ۱۰ دقیقه: <b>{bl}</b> — «تنظیم اخبار»",
+            f"⚡ رویداد گروهی: <b>{ev}</b> — «تنظیم رویداد»"]),
+            parse_mode="HTML", reply_markup=kb_admin())
     if w in ("ماموریت", "مأموریت", "چالش"):
         return await m.answer(quests.view(uid), parse_mode="HTML", reply_markup=kb_mil())
     if w == "جایزه":

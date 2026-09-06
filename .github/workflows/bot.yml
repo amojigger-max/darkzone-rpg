@@ -26,13 +26,14 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           PAT: ${{ secrets.PAT }}
           INLOOP_AUTOSAVE: "1"
-          AUTOSAVE_MIN: "10"
+          AUTOSAVE_MIN: "5"
         run: python -u run.py
       - name: autosave db
         if: always()
         run: |
-          git config user.name "darkzone-bot" && git config user.email bot@darkzone
-          python3 -c "import sqlite3; sqlite3.connect('darkzone.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')" || true
-          git add -f darkzone.db || true
+          git config user.name "ww-bot" && git config user.email bot@ww
+          python3 -c "import sqlite3; sqlite3.connect('worldwar.db').execute('PRAGMA wal_checkpoint(TRUNCATE)')" || true
+          git add -f worldwar.db || true
           git commit -m "autosave db" || echo "nothing"
-          git push https://x-access-token:${{ secrets.PAT }}@github.com/amojigger-max/darkzone-rpg.git HEAD:main || true
+          git pull --rebase -X theirs https://x-access-token:${{ secrets.PAT }}@github.com/amojigger-max/darkzone-rpg.git main || true
+          git push https://x-access-token:${{ secrets.PAT }}@github.com/amojigger-max/darkzone-rpg.git HEAD:main || echo "push failed"

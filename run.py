@@ -94,7 +94,9 @@ async def events_loop(bot: Bot):
     while True:
         try:
             now = db.now()
-            if now - int(db.kv_get("bl_last", "0")) >= 600:   # هر ۱۰ دقیقه
+            # 📰 خبرنامه‌ی هر ۱۰ دقیقه — قابل تنظیم توسط مالک: «تنظیم اخبار»
+            if (not db.kv_get("bl_off")
+                    and now - int(db.kv_get("bl_last", "0")) >= 600):
                 db.kv_set("bl_last", str(now))
                 bl = events.bulletin()
                 targets = set(events.active_chats())
@@ -104,11 +106,12 @@ async def events_loop(bot: Bot):
                 for cid in targets:
                     with contextlib.suppress(Exception):
                         await bot.send_message(cid, bl, parse_mode="HTML")
-            for cid in events.active_chats():
-                ev = events.maybe_event(cid)
-                if ev:
-                    with contextlib.suppress(Exception):
-                        await bot.send_message(cid, ev, parse_mode="HTML")
+            if not db.kv_get("ev_off"):
+                for cid in events.active_chats():
+                    ev = events.maybe_event(cid)
+                    if ev:
+                        with contextlib.suppress(Exception):
+                            await bot.send_message(cid, ev, parse_mode="HTML")
             await asyncio.sleep(45)
         except Exception:
             db.log("error", "events_loop: " + traceback.format_exc()[-300:])
@@ -116,10 +119,11 @@ async def events_loop(bot: Bot):
 
 
 async def autosave_loop():
-    """💾 ذخیره‌ی دوره‌ای دیتابیس در ریپو."""
+    """💾 ذخیره‌ی دوره‌ای دیتابیس در ریپو — هر ۵ دقیقه، با rebase ضدتعارض."""
     if not os.environ.get("INLOOP_AUTOSAVE"):
         return
-    iv = int(os.environ.get("AUTOSAVE_MIN", "10")) * 60
+    iv = int(os.environ.get("AUTOSAVE_MIN", "5")) * 60
+    url = "https://x-access-token:{}@github.com/amojigger-max/darkzone-rpg.git"
     while True:
         await asyncio.sleep(iv)
         try:
@@ -132,12 +136,18 @@ async def autosave_loop():
             subprocess.run(["git", "commit", "-m", "autosave"], check=False,
                            capture_output=True)
             pat = os.environ.get("PAT", "")
-            subprocess.run(["git", "push",
-                            f"https://x-access-token:{pat}@github.com/amojigger-max/darkzone-rpg.git",
-                            "HEAD:main"], check=False, capture_output=True)
-            db.log("info", "autosave ok")
+            u = url.format(pat)
+            r1 = subprocess.run(["git", "pull", "--rebase", "-X", "theirs", u, "main"],
+                                check=False, capture_output=True, text=True)
+            r2 = subprocess.run(["git", "push", u, "HEAD:main"],
+                                check=False, capture_output=True, text=True)
+            if r2.returncode != 0:
+                print("autosave push failed:", (r2.stderr or "")[-300:], flush=True)
+                db.log("error", "autosave push: " + (r2.stderr or "")[-200:])
+            else:
+                db.log("info", "autosave ok")
         except Exception:
-            db.log("error", "autosave failed")
+            db.log("error", "autosave failed: " + traceback.format_exc()[-200:])
 
 
 async def main():
