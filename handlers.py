@@ -103,8 +103,8 @@ def _admin_stats() -> str:
         "➕ ثبت بازیکن: <code>ثبت آیدی کشور</code>",
         "مثال: <code>ثبت 8694290031 ایران</code>",
         "",
-        "👑 رهبر کشور: <code>رهبر آیدی کشور</code>",
-        "مثال: <code>رهبر 8694290031 آمریکا</code>",
+        "👑 رهبر کشور: ریپلای روی پیام بازیکن + «رهبر کشور»",
+        "یا: <code>رهبر آیدی کشور</code> · <code>رهبر @آیدی کشور</code>",
         "خلع ← NPC: <code>رهبر خالی آمریکا</code>",
         "",
         "🔄 تغییر کشور: <code>تغییر آیدی کشور</code>",
@@ -137,6 +137,24 @@ def _admin_change(uid_target: int, country_name: str) -> str:
     return f"🔄 کشور بازیکن <code>{uid_target}</code> ← {c['flag']} {c['name']}"
 
 
+def _set_leader(uid_t: int, cname: str) -> str:
+    """👑 رهبر کردن بازیکن مشخص در کشور — ثبت خودکار هم دارد."""
+    cid = _find_country(cname or "")
+    if not cid:
+        return "⛔ کشور نامعتبر — مثال: <code>رهبر آمریکا</code>"
+    p = state.get(uid_t)
+    if p and p["country"] and p["country"] != cid:
+        return (f"⛔ بازیکن در کشور دیگری است — اول: "
+                f"<code>تغییر {uid_t} {countries.COUNTRIES[cid]['name']}</code>")
+    if not p or not p["country"]:
+        if not state.enlist(uid_t, cid, f"Player{uid_t % 1000}"):
+            return "⛔ خطا در ثبت."
+    db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid_t,))
+    c = countries.COUNTRIES[cid]
+    return f"👑 بازیکن <code>{uid_t}</code> رهبر {c['flag']} {c['name']} شد!"""
+
+
 def _admin_leader(arg: str) -> str:
     """👑 تعیین/خلع رهبر کشور — با آیدی عددی یا «خالی» برای NPC."""
     parts = arg.split()
@@ -147,25 +165,15 @@ def _admin_leader(arg: str) -> str:
             return "⛔ کشور نامعتبر — مثال: <code>رهبر خالی آمریکا</code>"
         c = countries.COUNTRIES[cid]
         db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
+        # 🧹 ثبت‌های اشتباه قدیمی (Player بدون فعالیت) پاک می‌شوند
+        db.ex("DELETE FROM users WHERE country=? AND chat_id IS NULL "
+              "AND (name LIKE 'Player%') AND branch IS NULL", (cid,))
         return f"♻️ {c['flag']} {c['name']} بدون رهبر شد — دولت NPC."
-    if len(parts) < 2 or not parts[0].isdigit():
-        return ("🔎 الگو: <code>رهبر آیدی کشور</code> · خلع: <code>رهبر خالی کشور</code>\n"
-                "مثال: <code>رهبر 8694290031 آمریکا</code>")
-    uid_t, cname = int(parts[0]), " ".join(parts[1:])
-    cid = _find_country(cname)
-    if not cid:
-        return "⛔ کشور نامعتبر — مثال: <code>رهبر 8694290031 آمریکا</code>"
-    p = state.get(uid_t)
-    if p and p["country"] and p["country"] != cid:
-        return (f"⛔ {uid_t} در کشور دیگری است — اول: "
-                f"<code>تغییر {uid_t} {countries.COUNTRIES[cid]['name']}</code>")
-    if not p or not p["country"]:
-        if not state.enlist(uid_t, cid, f"Player{uid_t % 1000}"):
-            return "⛔ خطا در ثبت."
-    db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
-    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid_t,))
-    c = countries.COUNTRIES[cid]
-    return f"👑 بازیکن <code>{uid_t}</code> رهبر {c['flag']} {c['name']} شد!"
+    if len(parts) >= 2 and parts[0].isdigit():
+        return _set_leader(int(parts[0]), " ".join(parts[1:]))
+    return ("🔎 الگو: روی پیام بازیکن ریپلای کن و بنویس <code>رهبر کشور</code>\n"
+            "یا: <code>رهبر آیدی‌عددی کشور</code> · <code>رهبر @آیدی کشور</code> · "
+            "خلع: <code>رهبر خالی کشور</code>")
 
 
 @router.callback_query(F.data.startswith("ad:"))
@@ -619,7 +627,8 @@ async def fa_words(m: Message):
     w = parts[0]
     arg = parts[1] if len(parts) > 1 else ""
     uid = m.from_user.id
-    state.ensure(uid, m.from_user.first_name, m.chat.id)
+    state.ensure(uid, m.from_user.first_name, m.chat.id,
+                 getattr(m.from_user, "username", None))
     # رویداد گروهی
     if w in ("تحویل", "اعزام", "رمزگشایی"):
         return await _ev_claim(m, w)
@@ -762,9 +771,28 @@ async def fa_words(m: Message):
     if w == "رهبر":
         if uid != config.OWNER_ID:
             return await m.answer("👑 فقط مالک!", parse_mode="HTML")
+        parts_l = arg.split() if arg else []
+        # 📌 ریپلای روی پیام بازیکن + «رهبر کشور»
+        ru = getattr(m.reply_to_message, "from_user", None) if m.reply_to_message else None
+        if ru and parts_l and parts_l[0] not in ("خالی", "-"):
+            return await m.answer(_set_leader(ru.id, " ".join(parts_l)),
+                                  parse_mode="HTML", reply_markup=kb_admin())
+        # @آیدی بازیکنی که در گروه دیده‌ایم
+        if parts_l and parts_l[0].startswith("@") and parts_l[0][1:]:
+            r = db.one("SELECT uid FROM users WHERE username=? COLLATE NOCASE",
+                       (parts_l[0][1:],))
+            if r:
+                return await m.answer(_set_leader(r["uid"], " ".join(parts_l[1:])),
+                                      parse_mode="HTML", reply_markup=kb_admin())
+            return await m.answer(
+                "⛔ این @آیدی را ندیده‌ام — بازیکن یک بار در گروه پیام بدهد، "
+                "یا روی پیامش ریپلای کن و بنویس: <code>رهبر کشور</code>",
+                parse_mode="HTML")
         if not arg:
-            return await m.answer("🔎 الگو: <code>رهبر آیدی کشور</code> · خلع: <code>رهبر خالی کشور</code>",
-                                  parse_mode="HTML")
+            return await m.answer(
+                "🔎 روی پیام بازیکن ریپلای کن و بنویس: <code>رهبر کشور</code>\n"
+                "یا: <code>رهبر آیدی‌عددی کشور</code> · <code>رهبر @آیدی کشور</code> · "
+                "خلع: <code>رهبر خالی کشور</code>", parse_mode="HTML")
         return await m.answer(_admin_leader(arg), parse_mode="HTML", reply_markup=kb_admin())
     if w == "تنظیم":
         if uid != config.OWNER_ID:

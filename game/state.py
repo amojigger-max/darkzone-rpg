@@ -14,11 +14,21 @@ def get(uid) -> dict:
     return dict(r) if r else None
 
 
-def ensure(uid, name=None, chat_id=None):
-    db.ex("INSERT OR IGNORE INTO users(uid,name,joined,last_active,chat_id) VALUES(?,?,?,?,?)",
-          (uid, texts.esc(name or "")[:32], db.now(), db.now(), chat_id))
+def ensure(uid, name=None, chat_id=None, username=None):
+    db.ex("INSERT OR IGNORE INTO users(uid,name,joined,last_active,chat_id,username) "
+          "VALUES(?,?,?,?,?,?)",
+          (uid, texts.esc(name or "")[:32], db.now(), db.now(), chat_id, username))
     db.ex("UPDATE users SET last_active=?, chat_id=COALESCE(?,chat_id) WHERE uid=?",
           (db.now(), chat_id, uid))
+    # نام جای‌نگهدار (PlayerNN) با نام واقعی تازه می‌شود + @آیدی ذخیره
+    if name or username:
+        row = db.one("SELECT name, username FROM users WHERE uid=?", (uid,))
+        if row:
+            old = row["name"] or ""
+            if name and (not old or old.startswith("Player")):
+                db.ex("UPDATE users SET name=? WHERE uid=?", (texts.esc(name)[:32], uid))
+            if username and username != (row["username"] or ""):
+                db.ex("UPDATE users SET username=? WHERE uid=?", (username, uid))
 
 
 def enlist(uid, country: str, name: str) -> bool:

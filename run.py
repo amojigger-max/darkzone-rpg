@@ -36,7 +36,7 @@ _last = {}
 def _too_fast(uid: int) -> bool:
     """ضداسپم فقط فردی — ۲ ثانیه."""
     t = time.time()
-    if t - _last.get(uid, 0) < 2:
+    if t - _last.get(uid, 0) < 1:
         return True
     _last[uid] = t
     return False
@@ -147,6 +147,9 @@ async def autosave_loop():
 
 async def main():
     db.init()
+    # 🧹 ثبت‌های آزمایشی قدیمی (Player بدون فعالیت) پاک می‌شوند — کشورها به NPC برمی‌گردند
+    db.ex("DELETE FROM users WHERE name LIKE 'Player%' AND chat_id IS NULL "
+          "AND branch IS NULL")
     import countries
     countries.init_items()
     handlers.bot = bot = Bot(config.TOKEN,
@@ -162,9 +165,9 @@ async def main():
             who = getattr(event, "from_user", None)
             if who and who.id != config.OWNER_ID and _too_fast(who.id):
                 if isinstance(event, Message):
-                    await event.answer("⏳ آهسته‌تر — ۲ ثانیه.")
+                    await event.answer("⏳ یک لحظه...")
                 else:
-                    await event.answer("⏳ آهسته‌تر!")
+                    await event.answer("⏳ یک لحظه...")
                 return
             return await handler(event, data)
 

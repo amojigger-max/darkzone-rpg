@@ -1,5 +1,6 @@
 """🗄 جنگ جهانی — دیتابیس (SQLite WAL + thread-local)."""
 import json
+import contextlib
 import sqlite3
 import threading
 import time
@@ -21,7 +22,9 @@ def con():
         c = sqlite3.connect(config.DB_PATH, 30)
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")
         c.execute("PRAGMA busy_timeout=8000")
+        c.execute("PRAGMA temp_store=MEMORY")
         _local.con = c
     return c
 
@@ -35,7 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
     hp INTEGER DEFAULT 100, max_hp INTEGER DEFAULT 100,
     kills INTEGER DEFAULT 0, spy_ops INTEGER DEFAULT 0,
     party_id INTEGER, is_leader INTEGER DEFAULT 0,
-    joined INTEGER, last_active INTEGER, chat_id INTEGER
+    joined INTEGER, last_active INTEGER, chat_id INTEGER, username TEXT
 );
 CREATE TABLE IF NOT EXISTS items (
     iid TEXT PRIMARY KEY, name TEXT, emoji TEXT, country TEXT,
@@ -94,6 +97,9 @@ def init(path: str = None):
             _local.con.close()
             _local.con = None
     con().executescript(SCHEMA)
+    # مهاجرت آرام — دیتابیس‌های قدیمی ستون تازه را می‌گیرند
+    with contextlib.suppress(Exception):
+        con().execute("ALTER TABLE users ADD COLUMN username TEXT")
     # ⚡ ایندکس‌های سرعت — ۱۰۰۰ بازیکن همزمان
     con().executescript("""
 CREATE INDEX IF NOT EXISTS ix_users_country ON users(country);
