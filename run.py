@@ -166,10 +166,10 @@ async def main():
                 db.GAME.set(chat.id)
             who = getattr(event, "from_user", None)
             if who and who.id != config.OWNER_ID and _too_fast(who.id):
-                if isinstance(event, Message):
-                    await event.answer("⏳ یک لحظه...")
-                else:
-                    await event.answer("⏳ یک لحظه...")
+                # 🤫 گروه تمیز — سریع‌زدن‌ها بی‌سروصدا رد می‌شوند
+                if not isinstance(event, Message):
+                    with contextlib.suppress(Exception):
+                        await event.answer()
                 return
             return await handler(event, data)
 

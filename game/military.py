@@ -122,7 +122,7 @@ def blackmarket(uid) -> str:
         price = int(economy.real_price(it[5]) * 1.7)
         c = countries.COUNTRIES[it[2]]
         own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        mark = "✅ از قبل داری" if own else f"💰 {texts.fa(price)}"
+        mark = "✅ از قبل داری" if own else f"💰 {texts.money(p['country'], price)}"
         lines.append(f"{it[1]} {it[0]} ({c['flag']}) — {mark}")
     lines += ["", "🛒 خرید با دکمه‌های زیر — هر ساعت لیست عوض می‌شود."]
     return "\n".join(lines)
@@ -140,7 +140,8 @@ def buy_black(uid, iid: str) -> str:
         return "✅ از قبل داری."
     price = int(economy.real_price(it[5]) * 1.7)
     if p["money"] < price:
-        return f"💰 پول کم — لازم: {texts.fa(price)} · داری: {texts.fa(p['money'])}"
+        return (f"💰 پول کم — لازم: {texts.money(p['country'], price)} · "
+                f"داری: {texts.money(p['country'], p['money'])}")
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
     db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
     return f"☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
@@ -148,6 +149,11 @@ def buy_black(uid, iid: str) -> str:
 
 def item_level(uid, iid: str) -> int:
     return int(db.kv_get(f"itlvl:{uid}:{iid}", "1"))
+
+
+def _lvl_mult(uid, iid: str) -> int:
+    """ضریب قدرت ارتقا — هر سطح +۲۵٪: سطح ۱=۱۰۰٪ · ۲=۱۲۵٪ · ۳=۱۵۰٪."""
+    return 100 + 25 * (item_level(uid, iid) - 1)
 
 
 def upgrade(uid, iid: str) -> str:
@@ -164,11 +170,17 @@ def upgrade(uid, iid: str) -> str:
         return "⭐ تجهیز در حداکثر سطح (۳) است."
     cost = int(economy.real_price(it[5]) * 0.6 * lvl)
     if p["money"] < cost:
-        return f"💰 ارتقا {texts.fa(cost)} می‌ارزد — داری: {texts.fa(p['money'])}"
+        return (f"💰 ارتقا {texts.money(p['country'], cost)} می‌ارزد — "
+                f"داری: {texts.money(p['country'], p['money'])}")
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
     db.kv_set(f"itlvl:{uid}:{iid}", str(lvl + 1))
-    return (f"⬆️ <b>{it[0]}</b> ارتقا یافت به سطح {lvl + 1} — "
-            f"قدرت +{texts.fa(25 * (lvl + 1))}٪\nهزینه: {texts.fa(cost)}")
+    t = texts
+    return "\n".join([
+        t.hdr("ارتقای تجهیز", "⬆️"),
+        t.row("تجهیز", f"{it[1]} {it[0]}"),
+        t.row("سطح جدید", f"{t.fa(lvl + 1)} از ۳"),
+        t.row("قدرت", f"+{t.fa(25 * lvl)}٪"),
+        t.row("هزینه", f"💰 {t.money(p['country'], cost)}")])
 
 
 def repair(uid) -> str:
@@ -176,35 +188,47 @@ def repair(uid) -> str:
     p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
+    from game import economy
     rows = db.q("SELECT i.iid, i.dur FROM inventory i WHERE i.uid=? AND i.dur<100", (uid,))
     if not rows:
         return "🔧 همه‌ی تجهیزات سالم‌اند."
-    total = 0
+    total, fixed = 0, 0
     for r in rows:
-        cost = (100 - r["dur"]) * 30
+        it = countries.ITEMS.get(r["iid"])
+        if not it:
+            continue
+        # هزینه‌ی تعمیر متناسب با قیمت واقعی تجهیز
+        cost = max(10, economy.real_price(it[5]) * (100 - r["dur"]) // 100)
         if p["money"] < total + cost:
             break
         total += cost
+        fixed += 1
         db.ex("UPDATE inventory SET dur=100 WHERE uid=? AND iid=?", (uid, r["iid"]))
     if total == 0:
         return "💰 پول تعمیر کافی نیست — جیره‌ی روزانه‌ات را بگیر (منو)."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (total, uid))
-    return f"🔧 تعمیر کامل انجام شد — هزینه: 💰 {texts.fa(total)}"
+    t = texts
+    return "\n".join([
+        t.hdr("تعمیرگاه", "🔧"),
+        t.row("تجهیزات تعمیرشده", fixed),
+        t.row("هزینه", f"💰 {t.money(p['country'], total)}"),
+        "", "✅ همه‌ی آن‌ها با دوام ۱۰۰٪ برگشتند."])
 
 
 def loadout(uid):
-    """بهترین تجهیز تهاجمی + دفاعی بازیکن → (atk_item, def_item, atk, guard)."""
+    """بهترین تجهیز تهاجمی + دفاعی بازیکن → (atk_item, def_item, atk, guard, a_iid, d_iid)."""
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=? AND n.dur>10", (uid,))
     if not rows:
-        return None, None, 0, 0
+        return None, None, 0, 0, None, None
     best_a = max(rows, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
-                 * item_level(uid, r["iid"]))
+                 * _lvl_mult(uid, r["iid"]) // 100)
     best_d = max(rows, key=lambda r: countries.ITEMS[r["iid"]][4] * r["dur"] // 100
-                 * item_level(uid, r["iid"]))
+                 * _lvl_mult(uid, r["iid"]) // 100)
     a = countries.ITEMS[best_a["iid"]]
     d = countries.ITEMS[best_d["iid"]]
-    return a, d, (a[3] * best_a["dur"] // 100) * item_level(uid, best_a["iid"]), \
-        (d[4] * best_d["dur"] // 100) * item_level(uid, best_d["iid"])
+    return a, d, (a[3] * best_a["dur"] // 100) * _lvl_mult(uid, best_a["iid"]) // 100, \
+        (d[4] * best_d["dur"] // 100) * _lvl_mult(uid, best_d["iid"]) // 100, \
+        best_a["iid"], best_d["iid"]
 
 
 # ═══════════ رزم ═══════════
@@ -227,7 +251,7 @@ def battle(uid, tier: int = None) -> str:
     db.kv_set(f"battle:{uid}", str(db.now()))
     tier = tier if tier is not None else random.randint(0, min(4, p["level"]))
     name, ehp, eatk = ENEMIES[tier]
-    a, d, atk, guard = loadout(uid)
+    a, d, atk, guard, a_iid, d_iid = loadout(uid)
     wpn = a[0] if a else "تفنگ سبک"
     # 🎖 تخصص کشور در رزم
     mspec, mpct, mname = countries.spec_of(p["country"])
@@ -249,12 +273,11 @@ def battle(uid, tier: int = None) -> str:
         db.ex("UPDATE users SET hp=MAX(0,hp-?) WHERE uid=?", (edmg, uid))
         p = state.active(uid)
         log.append(f"🩸 ضدحمله → −{texts.fa(edmg)}")
-    # فرسایش دوام تجهیزات استفاده‌شده
-    for r in db.q("SELECT iid FROM inventory WHERE uid=? AND dur>10", (uid,)):
-        it = countries.ITEMS[r["iid"]]
-        if a and it[0] == a[0]:
+    # فرسایش دوام تجهیزات استفاده‌شده — سلاح و سپر، هر دو
+    for iid in (a_iid, d_iid):
+        if iid:
             db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
-                  (random.randint(4, 10), uid, r["iid"]))
+                  (random.randint(4, 10), uid, iid))
     t = texts
     if ehp <= 0:
         loot = (tier + 1) * 160

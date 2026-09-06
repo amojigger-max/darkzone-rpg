@@ -337,13 +337,12 @@ def kb_arsenal(uid) -> InlineKeyboardMarkup:
             it = countries.ITEMS[iid]
             row_ = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
             have = row_["qty"] if row_ else 0
-            price = economy.real_price(it[5])
             mark = f"📦{texts.fa(have)}" if have else "—"
             rows.append([
                 InlineKeyboardButton(
-                    text=f"{it[1]} {it[0]} — 💰{texts.fa(price)} · {mark}",
+                    text=f"{it[1]} {it[0]} · {mark}",
                     callback_data=f"wp:{iid}"),
-                InlineKeyboardButton(text="×۵", callback_data=f"wp5:{iid}")])
+                InlineKeyboardButton(text="×۵ خرید", callback_data=f"wp5:{iid}")])
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -487,8 +486,7 @@ def kb_black(uid) -> InlineKeyboardMarkup:
         it = countries.ITEMS[iid]
         c = countries.COUNTRIES[it[2]]
         own = db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-        price = int(economy.real_price(it[5]) * 1.7)
-        mark = "✅" if own else f"💰{texts.fa(price // 1000)}k"
+        mark = "✅" if own else "🛒"
         rows.append([InlineKeyboardButton(
             text=f"{it[1]} {it[0]} ({c['flag']}) — {mark}",
             callback_data=f"bb:{iid}")])
@@ -1096,17 +1094,6 @@ async def fa_words(m: Message):
             f"📰 خبرنامه‌ی هر ۱۰ دقیقه: <b>{bl}</b> — «تنظیم اخبار»",
             f"⚡ رویداد گروهی: <b>{ev}</b> — «تنظیم رویداد»"]),
             parse_mode="HTML", reply_markup=kb_admin())
-
-
-def _find_item(txt: str):
-    txt = (txt or "").strip()
-    for iid, it in countries.ITEMS.items():
-        if txt in (it[0], iid):
-            return iid
-    for iid, it in countries.ITEMS.items():
-        if txt and it[0] in txt:
-            return iid
-    return None
 
 
 def _find_country(txt: str):

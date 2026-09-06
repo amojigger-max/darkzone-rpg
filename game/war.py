@@ -12,7 +12,7 @@ import random
 import db
 import countries
 import texts
-from game import defense, economy, geo, state
+from game import defense, economy, geo, military, state
 
 
 FA_D = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
@@ -194,8 +194,8 @@ def duel_accept(uid) -> str:
     if not a["branch"] or not b["branch"]:
         return "🪖 هر دو باید عضو شاخه نظامی باشند."
     ca, cb = countries.COUNTRIES[a["country"]], countries.COUNTRIES[b["country"]]
-    _, _, aatk, adef = military.loadout(a["uid"])
-    _, _, batk, bdef = military.loadout(b["uid"])
+    _, _, aatk, adef, _, _ = military.loadout(a["uid"])
+    _, _, batk, bdef, _, _ = military.loadout(b["uid"])
     ahp, bhp = a["hp"], b["hp"]
     t = texts
     lines = [t.hdr("نبرد تن‌به‌تن", "⚔️"),
@@ -402,7 +402,8 @@ def strike(uid, kind: str, count: int = 1) -> str:
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
     if not have:
         return f"⛔ تجهیزات <b>{kind}</b> نداری — زرادخانه‌ات را کامل کن (منو)"
-    best = max(have, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100)
+    best = max(have, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
+               * military._lvl_mult(uid, r["iid"]) // 100)
     it = countries.ITEMS[best["iid"]]
     ecid = _enemy(p["country"], w)
     ec = countries.COUNTRIES[ecid]
@@ -426,7 +427,8 @@ def strike(uid, kind: str, count: int = 1) -> str:
              t.K]
     score_add = 0
     for n in range(1, count + 1):
-        base_dmg = it[3] * best["dur"] // 100 + p["level"] * 2
+        base_dmg = (it[3] * best["dur"] // 100
+                    * military._lvl_mult(uid, best["iid"]) // 100) + p["level"] * 2
         dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3) * dmg_mult))
         intercepted = random.random() < chance
         if intercepted:
@@ -450,7 +452,10 @@ def strike(uid, kind: str, count: int = 1) -> str:
                 lines.append(f"🚩 <b>{city} سقوط کرد!</b>")
     else:
         lines.append("💀 همه دفع شد — پدافند دشمن بیدار است.")
-    lines.append(f"🛠 دوام {it[0]}: −{str(count * 10).translate(FA_D)}٪")
+    d_now = db.one("SELECT dur FROM inventory WHERE uid=? AND iid=?",
+                   (uid, best["iid"]))
+    if d_now:
+        lines.append(f"🛠 دوام {it[0]}: {texts.fa(d_now['dur'])}٪")
     # 🎯 مصرف مهمات
     db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
     lines.append(f"🎯 مهمات کشورت: {texts.fa(ammo - count)}/{texts.fa(_ammo_total(p['country']))}")
@@ -494,7 +499,7 @@ def settle():
                 db.ex("UPDATE users SET money=MAX(0,money-?) WHERE uid=?",
                       (150, r["uid"]))
             out.append(f"🎁 غنیمت جنگ: هر سرباز {wc['name']} → "
-                       f"💰 {texts.fa(prize)} ({texts.money(win, prize)})")
+                       f"💰 {texts.money(win, prize)}")
             # ⛓ مستعمره‌ای که بر ضد اشغال‌گرش پیروز شد → آزاد!
             if geo.colony_of(win) == lose:
                 geo.free_colony(win)
@@ -516,7 +521,7 @@ def world_status() -> str:
         col = geo.colony_of(cid)
         if col and col in countries.COUNTRIES:
             return f"{c['flag']} {c['name']}: ⛓ {countries.COUNTRIES[col]['flag']}"
-        return f"{c['flag']} {c['name']}: {n if n else '🤖'}"
+        return f"{c['flag']} {c['name']}: {texts.fa(n) if n else '🤖'}"
     for a, b in zip(cids[::2], cids[1::2]):
         lines.append(_cell(a) + " · " + _cell(b))
     if len(cids) % 2:
@@ -590,7 +595,7 @@ def leaderboard() -> str:
     lines = [t.hdr("برترین فرماندهان", "🏆"), ""]
     for i, r in enumerate(rows, 1):
         c = countries.COUNTRIES.get(r["country"], {})
-        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{t.fa(i)}.")
         lines.append(f"{medal} {t.mention(r['uid'], r['name'] or 'سرباز')} — "
                      f"{c.get('flag', '')} سطح {t.fa(r['level'])} · ⚔️ {t.fa(r['kills'])}")
     return "\n".join(lines)

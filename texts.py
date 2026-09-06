@@ -17,15 +17,12 @@ def fa(x) -> str:
 
 
 def money(cid: str, amount) -> str:
-    """💰 مبلغ بر حسب پول رسمی کشور با نرخ زنده‌ی امروز."""
+    """💰 مبلغ بر حسب پول رسمی کشور با نرخ زنده‌ی امروز — دقیق، بدون گرد کردن."""
     import countries
     from game import economy
     nm = countries.CURRENCIES.get(cid, ("دلار", 1.0))[0]
     rate = economy.fx(cid)
     val = int(float(amount) * rate)
-    if rate >= 1000:
-        s = str(val)
-        val = int(s[:3].ljust(len(s), "0"))     # سه رقم معنادار
     return f"{fa(val)} {nm}"
 
 

@@ -30,7 +30,8 @@ def found(uid, name: str, ideology: str) -> str:
     if len(name) < 3 or len(name) > 28:
         return "⛔ نام حزب: ۳ تا ۲۸ حرف."
     if p["money"] < PARTY_COST:
-        return f"💰 تأسیس حزب {texts.fa(PARTY_COST)} سکه می‌ارزد — داری: {texts.fa(p['money'])} سکه"
+        return (f"💰 تأسیس حزب {texts.money(p['country'], PARTY_COST)} می‌ارزد — "
+                f"داری: {texts.money(p['country'], p['money'])}")
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (PARTY_COST, uid))
     db.ex("INSERT INTO parties(name,country,ideology,leader_uid,members,power,created) "
           "VALUES(?,?,?,?,1,10,?)", (texts.esc(name), p["country"],
@@ -132,7 +133,8 @@ def spy(uid, target: str) -> str:
     if not tc or target == p["country"]:
         return "⛔ کشور هدف نامعتبر یا خودت است."
     if db.now() - int(db.kv_get(f"spy:{uid}", "0")) < SPY_COOLDOWN:
-        return f"⏳ شبکه‌ی جاسوسی در حال بازسازی است — {SPY_COOLDOWN // 60} دقیقه."
+        return (f"⏳ شبکه‌ی جاسوسی در حال بازسازی است — "
+                f"{texts.fa(SPY_COOLDOWN // 60)} دقیقه.")
     db.kv_set(f"spy:{uid}", str(db.now()))
     my = countries.COUNTRIES[p["country"]]
     chance = max(0.15, 0.35 + (my["tech"] - tc["tech"]) * 0.12)
@@ -171,8 +173,12 @@ def spy(uid, target: str) -> str:
             ])
         db.ex("INSERT INTO spyops(uid,target,success,info,ts) VALUES(?,?,1,?,?)",
               (uid, target, info, db.now()))
+        state.gain_xp(uid, 40)
         return (f"🕵️ <b>عملیات موفق</b> در {tc['flag']} {tc['name']}\n"
-                f"└─ {info}\n⭐ +۴۰ XP")
-    state.gain_xp(uid, 40)
+                f"└─ {info}\n⭐ +{texts.fa(40)} XP")
+    # 💀 شکست: جان و جریمه‌ی واقعی — دیگر فقط حرف نیست
+    db.ex("UPDATE users SET hp=MAX(10,hp-20), money=MAX(0,money-300) WHERE uid=?",
+          (uid,))
     return (f"🕵️ <b>مأمور دستگیر شد</b> در {tc['flag']} {tc['name']}\n"
-            f"└─ ارتباط قطع شد — جان −۲۰\n💰 جریمه: ۳۰۰")
+            f"└─ ارتباط قطع شد — جان −{texts.fa(20)}\n"
+            f"💰 جریمه: {texts.money(p['country'], 300)}")

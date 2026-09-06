@@ -343,6 +343,29 @@ async def main():
     T("گفتگوی عادی ساکت", m_chat.out == "", m_chat.out)
     handlers.TEST_MODE = True
 
+    # ═══ v24.3: ارتقا +۲۵٪ واقعی · جایزه‌ی رویداد صادق ═══
+    from game import events as _ev
+    T("جایزه‌ی تحویل = ۴۰۰", _ev.EVENTS[0][2] == 400, _ev.EVENTS[0][2])
+    st.ensure(666, "ارتقا"); st.enlist(666, "hz", "ارتقا")
+    db.ex("UPDATE users SET money=99999 WHERE uid=666")
+    military.buy(666, "kornet", 1)
+    _, _, atk1, _, _, _ = military.loadout(666)
+    up1 = military.upgrade(666, "kornet")
+    T("ارتقا سطح ۲", "سطح جدید" in up1 and "۲" in up1, up1)
+    _, _, atk2, _, _, _ = military.loadout(666)
+    T("ارتقا +۲۵٪ واقعی", atk2 == atk1 * 5 // 4, f"{atk1}→{atk2}")
+    up2 = military.upgrade(666, "kornet")
+    _, _, atk3, _, _, _ = military.loadout(666)
+    T("ارتقا سطح ۳ +۵۰٪", atk3 == atk1 * 3 // 2, f"{atk1}→{atk3}")
+    up3 = military.upgrade(666, "kornet")
+    T("سقف ارتقا ۳", "حداکثر" in up3, up3)
+    # تعمیر قیمت‌محور: خراب کن → تعمیر → گزارش
+    db.ex("UPDATE inventory SET dur=40 WHERE uid=666 AND iid='kornet'")
+    rep = military.repair(666)
+    T("تعمیر گزارش‌دار", "تعمیرشده" in rep and "هزینه" in rep, rep)
+    T("تعمیر دوام ۱۰۰", db.one("SELECT dur FROM inventory WHERE uid=666 "
+                               "AND iid='kornet'")["dur"] == 100)
+
     # ═══ v24.1: خرید ×۵ + سقف + فیلتر دستور + AI رهبر ═══
     import countries as _co
     st.ensure(777, "تست"); st.enlist(777, "hz", "تست")

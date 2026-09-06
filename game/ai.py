@@ -167,7 +167,8 @@ def respond_to_strike(attacker: str, defender: str, kind: str, hit: int) -> list
         if ally != attacker and random.random() < 0.5:
             col = "score_a" if w["a"] == defender else "score_b"
             db.ex(f"UPDATE wars SET {col}={col}+2 WHERE id=?", (w["id"],))
-            out.append(f"🤝 {_flag(ally)} متحدش را یاری کرد: +2 دشمن")
+            out.append(f"🤝 {_flag(ally)} متحدش را یاری کرد: "
+                       f"+{texts.fa(2)} دشمن")
             break
     # گاهی تحریم اقتصادی مهاجم
     if hit and random.random() < 0.15:

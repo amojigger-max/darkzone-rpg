@@ -156,22 +156,24 @@ def ration(uid) -> str:
     db.kv_set(f"streak:{uid}", str(streak))
     from game import quests
     quests.on_event(uid, "جیره")
-    # 🎁 صندوق ویژه‌ی حضور — واقعی: ۳۵٪ شانس یک تجهیز رایگان برای سربازان وفادار
+    # 🎁 صندوق ویژه‌ی حضور — واقعی: ۳۵٪ شانس جایزه برای سربازان وفادار (۳ روز+)
     bonus = ""
     if streak >= 3:
         import random as _r
-        own = {r["iid"] for r in db.q("SELECT iid FROM inventory WHERE uid=?", (uid,))}
-        cands = [iid for iid in countries.COUNTRIES[p["country"]]["items"]
-                 if iid not in own]
-        if _r.random() < 0.35 and cands:
-            iid = _r.choice(cands)
-            db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)",
-                  (uid, iid))
-            it = countries.ITEMS[iid]
-            bonus = f"\n🎁 صندوق ویژه‌ی حضور: {it[1]} {it[0]} رایگان رسید!"
-        elif _r.random() < 0.35:
-            db.ex("UPDATE users SET money=money+100 WHERE uid=?", (uid,))
-            bonus = "\n🎁 صندوق ویژه‌ی حضور: +۱۰۰ سکه‌ی جایزه!"
+        if _r.random() < 0.35:
+            own = {r["iid"] for r in db.q("SELECT iid FROM inventory WHERE uid=?",
+                                          (uid,))}
+            cands = [iid for iid in countries.COUNTRIES[p["country"]]["items"]
+                     if iid not in own]
+            if cands:
+                iid = _r.choice(cands)
+                db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) "
+                      "VALUES(?,?,1,100)", (uid, iid))
+                it = countries.ITEMS[iid]
+                bonus = f"\n🎁 صندوق ویژه‌ی حضور: {it[1]} {it[0]} رایگان رسید!"
+            else:
+                db.ex("UPDATE users SET money=money+150 WHERE uid=?", (uid,))
+                bonus = "\n🎁 صندوق ویژه‌ی حضور: +۱۵۰ سکه‌ی جایزه!"
     cur = texts.money(p["country"], amount)
     return (f"🍞 جیره‌ی روزانه: {cur}\n"
             f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"
