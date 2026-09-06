@@ -12,7 +12,7 @@ import random
 import db
 import countries
 import texts
-from game import economy, geo, state
+from game import defense, economy, geo, state
 
 
 FA_D = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
@@ -204,6 +204,11 @@ def declare(leader_uid: int, target: str) -> str:
     mc = countries.COUNTRIES[p["country"]]
     db.ex("INSERT INTO wars(a,b,started,ends) VALUES(?,?,?,?)",
           (p["country"], target, db.now(), db.now() + WAR_HOURS * 3600))
+    w2 = db.one("SELECT * FROM wars WHERE a=? AND b=? AND status='active' "
+                "ORDER BY id DESC", (p["country"], target))
+    if w2:
+        _init_ammo(w2)
+    defense.ensure(p["country"]), defense.ensure(target)
     economy.on_war_start()          # شوک بازار
     fronts = geo.fronts_of(p["country"], target)
     t = texts
@@ -221,6 +226,104 @@ def war_of(cid: str):
     return db.one("SELECT * FROM wars WHERE status='active' AND (a=? OR b=?)", (cid, cid))
 
 
+# ═══════════ مهمات — محدودیت مستقل هر کشور در هر جنگ ═══════════
+
+def _ammo_key(w, cid: str) -> str:
+    return f"ammo:{w['id']}:{cid}"
+
+
+def _ammo_total(cid: str) -> int:
+    """سهم مهمات هر کشور — از قدرت نظامی‌اش."""
+    c = countries.COUNTRIES.get(cid)
+    return 16 + (c["mil"] * 3 if c else 6)
+
+
+def _init_ammo(w):
+    for cid in (w["a"], w["b"]):
+        k = _ammo_key(w, cid)
+        if not db.kv_get(k):
+            db.kv_set(k, str(_ammo_total(cid)))
+
+
+def front(uid) -> str:
+    """🗺 پنل تمیز جبهه‌ی جنگ کشور بازیکن."""
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    w = war_of(p["country"])
+    t = texts
+    if not w:
+        return t.hdr("جبهه", "🗺") + "\n🕊 کشورت در جنگ نیست — آماده بمان."
+    _init_ammo(w)
+    cid = p["country"]
+    ecid = _enemy(cid, w)
+    mc, ec = countries.COUNTRIES[cid], countries.COUNTRIES[ecid]
+    mine = w["score_a"] if w["a"] == cid else w["score_b"]
+    theirs = w["score_b"] if w["a"] == cid else w["score_a"]
+    hours = max(0, w["ends"] - db.now()) // 3600
+    ammo = int(db.kv_get(_ammo_key(w, cid), "0") or 0)
+    lines = [t.hdr("جبهه‌ی جنگ", "🗺"),
+             f"{mc['flag']} {mc['name']} ⚔️ {ec['flag']} {ec['name']}",
+             t.row("امتیاز جبهه", f"{mine} : {theirs}"),
+             t.row("زمان مانده", f"{hours} ساعت"),
+             t.row("مهمات کشورت", f"{ammo}/{_ammo_total(cid)}"),
+             "",
+             f"🛡 <b>سپر ملی {ec['name']}:</b>"]
+    for layer in defense.LAYERS:
+        lines.append(f"▫️ {defense.LAYERS[layer]} {layer}: {defense.level(ecid, layer)}")
+    occ = geo.occupied(ecid)
+    if occ:
+        lines += ["", "🚩 اشغال‌های ما: " + " · ".join(occ)]
+    myocc = geo.occupied(cid)
+    if myocc:
+        lines.append("💀 شهرهای ازدست‌رفته‌ی ما: " + " · ".join(myocc))
+    return "\n".join(lines)
+
+
+def army(uid) -> str:
+    """🪖 ارتش کشور — سربازان، تجهیزات، سپر، محدودیت‌های مستقل."""
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    cid = p["country"]
+    c = countries.COUNTRIES[cid]
+    t = texts
+    n_players = db.one("SELECT COUNT(*) n FROM users WHERE country=?", (cid,))["n"]
+    brs = db.q("SELECT branch, COUNT(*) n FROM users "
+               "WHERE country=? AND branch IS NOT NULL GROUP BY branch", (cid,))
+    eq = db.q("SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
+              "WHERE u.country=?", (cid,))
+    atk = sum(countries.ITEMS[r["iid"]][3] * r["dur"] // 100 for r in eq
+              if r["iid"] in countries.ITEMS)
+    guard = sum(countries.ITEMS[r["iid"]][4] * r["dur"] // 100 for r in eq
+                if r["iid"] in countries.ITEMS)
+    defense.ensure(cid)
+    davg = db.one("SELECT AVG(level) a FROM defense WHERE cid=?", (cid,))["a"] or 0
+    manpower = 100 + c["mil"] * 20 + n_players * 15
+    lines = [t.hdr(f"ارتش {c['name']}", "🪖"),
+             t.row("سربازان", n_players),
+             t.row("قدرت تجهیزات", f"⚔️ {atk} · 🛡 {guard}"),
+             t.row("میانگین سپر ملی", f"{davg:.0f}"),
+             t.row("نیروی انسانی", manpower)]
+    if brs:
+        lines.append("▫️ شاخه‌ها: " + " · ".join(f"{r['branch']} {r['n']}" for r in brs))
+    if economy.sanctioned(cid):
+        lines.append("🚫 کشورت تحت تحریم اقتصادی است!")
+    w = war_of(cid)
+    if w:
+        _init_ammo(w)
+        ammo = int(db.kv_get(_ammo_key(w, cid), "0") or 0)
+        lines.append(t.row("مهمات جنگ", f"{ammo}/{_ammo_total(cid)}"))
+    else:
+        lines.append("🕊 کشورت در صلح است.")
+    lines += ["", "⚙️ <b>محدودیت‌های کشورت:</b>",
+              "▫️ موج حمله: هر ۴۵ ثانیه",
+              "▫️ حداکثر شلیک هر موج: ۵",
+              f"▫️ مهمات هر جنگ: {_ammo_total(cid)}",
+              "▫️ جنگ همزمان: ۱"]
+    return "\n".join(lines)
+
+
 def _enemy(cid: str, w) -> str:
     return w["b"] if w["a"] == cid else w["a"]
 
@@ -235,8 +338,12 @@ def strike(uid, kind: str, count: int = 1) -> str:
         return "🕊 کشورت در جنگ نیست."
     if db.now() - int(db.kv_get(f"strike:{uid}", "0")) < 45:
         return "⏳ ۴۵ ثانیه بین موج حمله."
+    _init_ammo(w)
+    ammo = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
+    if ammo <= 0:
+        return "🎯 مهمات جنگ تمام شد — «جبهه» را ببین. صلح یا شکست."
     db.kv_set(f"strike:{uid}", str(db.now()))
-    count = max(1, min(5, count))
+    count = max(1, min(5, count, ammo))
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
     if not have:
@@ -245,14 +352,11 @@ def strike(uid, kind: str, count: int = 1) -> str:
     it = countries.ITEMS[best["iid"]]
     ecid = _enemy(p["country"], w)
     ec = countries.COUNTRIES[ecid]
-    def_rows = db.q("SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
-                    "WHERE u.country=?", (ecid,))
-    def_pwr = sum(countries.ITEMS[r["iid"]][4] * r["dur"] // 100
-                  for r in def_rows if kind_of(r["iid"]) == "پدافندی") + ec["mil"] * 6
-    # 🎖 تخصص پدافندیِ کشور دشمن
+    # 🛡 سپر ملی دشمن — لایه‌ی مقابل + جنگ الکترونیک (فرسایش واقعی)
+    chance, dmg_mult, layer, dlevel = defense.absorb(ecid, kind, count)
     espec, epct, _ = countries.spec_of(ecid)
     if espec == "پدافندی":
-        def_pwr = int(def_pwr * (1 + epct / 100))
+        chance = min(0.90, chance * (1 + epct / 200))
     # 🎖 تخصص کشور مهاجم در همین نوع حمله
     mspec, mpct, _ = countries.spec_of(p["country"])
     spec_mark = ""
@@ -264,12 +368,13 @@ def strike(uid, kind: str, count: int = 1) -> str:
     lines = [t.hdr(f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
                                           "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
              f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}{spec_mark}",
+             f"🛡 {layer} دشمن: سطح {dlevel}",
              t.K]
     score_add = 0
     for n in range(1, count + 1):
         base_dmg = it[3] * best["dur"] // 100 + p["level"] * 2
-        dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3)))
-        intercepted = random.random() < min(0.75, def_pwr / (def_pwr + dmg))
+        dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3) * dmg_mult))
+        intercepted = random.random() < chance
         if intercepted:
             lines.append(f"  {n}. 🛡 دفع شد — پدافند در آسمان نابودش کرد")
         else:
@@ -292,11 +397,18 @@ def strike(uid, kind: str, count: int = 1) -> str:
     else:
         lines.append("💀 همه دفع شد — پدافند دشمن بیدار است.")
     lines.append(f"🛠 دوام {it[0]}: −{str(count * 10).translate(FA_D)}٪")
-    # ضدحمله‌ی هوشمند دشمن
+    # 🎯 مصرف مهمات
+    db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
+    lines.append(f"🎯 مهمات کشورت: {ammo - count}/{_ammo_total(p['country'])}")
+    # ضدحمله‌ی مستقیم به فرمانده
     if random.random() < 0.4 and score_add:
         edmg = random.randint(8, 25)
         db.ex("UPDATE users SET hp=MAX(15,hp-?) WHERE uid=?", (edmg, uid))
         lines.append(f"⚠️ ضدحمله‌ی {ec['name']}! 🩸 −{edmg}")
+    # 🧠 پاسخ هوشمند جهان — دشمن واقعی جواب می‌دهد
+    from game import ai
+    for ln in ai.respond_to_strike(p["country"], ecid, kind, score_add):
+        lines.append(ln)
     return "\n".join(lines)
 
 

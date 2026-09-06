@@ -13,7 +13,7 @@ from aiogram.enums import ParseMode
 import config
 import db
 import handlers
-from game import economy, events, war
+from game import ai, economy, events, war
 
 NEWS_TMPL = [
     ("📡 خبرگزاری جهانی: شاخص دلار به ×{dollar:.2f} رسید — تحلیلگران نگران‌اند.", "dollar"),
@@ -60,6 +60,14 @@ async def world_loop(bot: Bot):
                 if gid:
                     with contextlib.suppress(Exception):
                         await bot.send_message(int(gid), msg, parse_mode="HTML")
+            # 🧠 مغز جهان — کشورها مستقل عمل می‌کنند و جهان پاسخ می‌دهد
+            for line in ai.tick():
+                gid = db.kv_get("main_group")
+                targets = {int(gid)} if gid else set()
+                targets.update(events.active_chats())
+                for cid in targets:
+                    with contextlib.suppress(Exception):
+                        await bot.send_message(cid, line, parse_mode="HTML")
             # دولت هوشمند: خبرگزاری جهان
             if w["inflation"] > 1.0 and db.now() % 600 < 70:
                 gid = db.kv_get("main_group")

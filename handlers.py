@@ -10,7 +10,7 @@ import config
 import countries
 import db
 import texts
-from game import economy, events, geo, military, politics, quests, state, war
+from game import ai, defense, economy, events, geo, military, politics, quests, state, war
 
 router = Router()
 bot: Bot = None
@@ -176,7 +176,24 @@ def kb_world() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🏆 رتبه", callback_data="mn:lb")],
         [InlineKeyboardButton(text="📈 بازار", callback_data="mn:market"),
          InlineKeyboardButton(text="🏙 نقشه‌ی کشور", callback_data="mn:map")],
+        [InlineKeyboardButton(text="📰 اخبار", callback_data="mn:news"),
+         InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front")],
+        [InlineKeyboardButton(text="🪖 ارتش کشور", callback_data="mn:army"),
+         InlineKeyboardButton(text="🛡 سپر ملی", callback_data="mn:def")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+
+
+def kb_def() -> InlineKeyboardMarkup:
+    """تقویت لایه‌های سپر ملی — هر عضو کشور سهم دارد."""
+    L = defense.LAYERS
+    keys = list(L)
+    rows = []
+    for a, b in zip(keys[::2], keys[1::2]):
+        rows.append([InlineKeyboardButton(text=f"➕ {L[a]}", callback_data=f"df:{a}"),
+                     InlineKeyboardButton(text=f"➕ {L[b]}", callback_data=f"df:{b}")])
+    rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
+                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def kb_branches(uid) -> InlineKeyboardMarkup:
@@ -295,6 +312,18 @@ async def _edit(c: CallbackQuery, text: str, kb=None):
                                reply_markup=kb or kb_main())
 
 
+@router.callback_query(F.data.startswith("df:"))
+async def cb_defense(c: CallbackQuery):
+    uid = c.from_user.id
+    layer = c.data.split(":", 1)[1]
+    msg = defense.strengthen(uid, layer)
+    p = state.active(uid)
+    if p:
+        msg += "\n\n" + defense.status(p["country"])
+    await _edit(c, msg, kb_def())
+    await c.answer()
+
+
 @router.callback_query(F.data.startswith("mn:"))
 async def cb_menu(c: CallbackQuery):
     uid = c.from_user.id
@@ -348,6 +377,15 @@ async def cb_menu(c: CallbackQuery):
     elif what == "map":
         p = state.active(uid)
         await _edit(c, geo.country_map(p["country"]) if p else "⛔ اول «شروع»", kb_world())
+    elif what == "news":
+        await _edit(c, ai.news_feed(), kb_world())
+    elif what == "front":
+        await _edit(c, war.front(uid), kb_strikes())
+    elif what == "army":
+        await _edit(c, war.army(uid), kb_world())
+    elif what == "def":
+        p = state.active(uid)
+        await _edit(c, defense.status(p["country"]) if p else "⛔ اول «شروع»", kb_def())
     elif what == "quest":
         await _edit(c, quests.view(uid), kb_mil())
     elif what == "black":
@@ -570,6 +608,21 @@ async def fa_words(m: Message):
         p = state.active(uid)
         return await m.answer(geo.country_map(p["country"]) if p else "⛔ اول «شروع»",
                               parse_mode="HTML", reply_markup=kb_world())
+    if w == "پدافند":
+        p = state.active(uid)
+        if not p:
+            return await m.answer("⛔ اول «شروع»", parse_mode="HTML")
+        return await m.answer(defense.status(p["country"]), parse_mode="HTML",
+                              reply_markup=kb_def())
+    if w == "تقویت" and arg:
+        return await m.answer(defense.strengthen(uid, arg), parse_mode="HTML",
+                              reply_markup=kb_def())
+    if w == "جبهه":
+        return await m.answer(war.front(uid), parse_mode="HTML", reply_markup=kb_strikes())
+    if w == "اخبار":
+        return await m.answer(ai.news_feed(), parse_mode="HTML", reply_markup=kb_world())
+    if w == "ارتش":
+        return await m.answer(war.army(uid), parse_mode="HTML", reply_markup=kb_world())
     if w in ("مدیریت", "ادمین"):
         if uid != config.OWNER_ID:
             return await m.answer("👑 فقط مالک!", parse_mode="HTML")

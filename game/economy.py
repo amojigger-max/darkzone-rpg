@@ -53,6 +53,20 @@ def tick():
     return w
 
 
+def sanction_shock(cid: str):
+    """تحریم AI — تورم جهانی بالا می‌رود و کشور هدف علامت می‌خورد."""
+    w = world()
+    w["inflation"] = min(3.0, w["inflation"] + 0.05)
+    w["oil"] = min(240, w["oil"] * 1.05)
+    _save(w)
+    db.kv_set(f"sanction:{cid}", str(db.now()))
+
+
+def sanctioned(cid: str) -> bool:
+    ts = int(db.kv_get(f"sanction:{cid}", "0") or 0)
+    return ts and db.now() - ts < 24 * 3600
+
+
 def on_war_start():
     """جنگ تازه → شوک بازار."""
     w = world()
