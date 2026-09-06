@@ -346,6 +346,8 @@ def strike(uid, kind: str, count: int = 1) -> str:
     if ammo <= 0:
         return "🎯 مهمات جنگ تمام شد — «جبهه» را ببین. صلح یا شکست."
     db.kv_set(f"strike:{uid}", str(db.now()))
+    from game import quests as _q
+    _q.on_event(uid, "حمله")
     count = max(1, min(5, count, ammo))
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
@@ -432,6 +434,18 @@ def settle():
                        f"{texts.fa(min(w['score_a'], w['score_b']))}).")
             db.ex("DELETE FROM alliances WHERE (a=? AND b=?) OR (a=? AND b=?)",
                   (win, lose, lose, win))
+            # 🎁 غنیمت جنگ — سربازان برنده پاداش می‌گیرند، بازندگان می‌پردازند
+            prize = 400 + int(max(w["score_a"], w["score_b"])) * 35 \
+                + len(geo.held_by(win)) * 100
+            for r in db.q("SELECT uid FROM users WHERE country=?", (win,)):
+                db.ex("UPDATE users SET money=money+? WHERE uid=?",
+                      (prize, r["uid"]))
+                state.gain_xp(r["uid"], prize // 4)
+            for r in db.q("SELECT uid FROM users WHERE country=?", (lose,)):
+                db.ex("UPDATE users SET money=MAX(0,money-?) WHERE uid=?",
+                      (150, r["uid"]))
+            out.append(f"🎁 غنیمت جنگ: هر سرباز {wc['name']} → 💰 {texts.fa(prize)}"
+                       f" · سربازان بازنده −{texts.fa(150)}")
     return out
 
 
@@ -460,6 +474,32 @@ def world_status() -> str:
         left = max(0, w["ends"] - db.now()) // 3600
         lines.append(f"{a['flag']}{a['name']} ⚔️ {b['flag']}{b['name']} — "
                      f"{texts.fa(w['score_a'])}:{texts.fa(w['score_b'])} · {texts.fa(left)} ساعت")
+    return "\n".join(lines)
+
+
+def power_rank() -> str:
+    """🥇 رتبه‌بندی نظامی کشورها — سرباز، تجهیزات، سپر، اشغال، پیروزی."""
+    t = texts
+    rows = []
+    for cid, c in countries.COUNTRIES.items():
+        n = db.one("SELECT COUNT(*) n FROM users WHERE country=?", (cid,))["n"]
+        eq = db.q("SELECT n.iid, n.dur FROM inventory n JOIN users u ON u.uid=n.uid "
+                  "WHERE u.country=?", (cid,))
+        atk = sum(countries.ITEMS[r["iid"]][3] * r["dur"] // 100 for r in eq
+                  if r["iid"] in countries.ITEMS)
+        defense.ensure(cid)
+        sh = db.one("SELECT AVG(level) a FROM defense WHERE cid=?", (cid,))["a"] or 0
+        held = len(geo.held_by(cid))
+        won = db.one("SELECT COUNT(*) n FROM wars WHERE winner=?", (cid,))["n"]
+        power = n * 12 + atk // 8 + int(sh) * 2 + held * 6 + won * 40
+        rows.append((power, cid, n))
+    rows.sort(reverse=True)
+    lines = [t.hdr("قدرت نظامی کشورها", "🥇"), ""]
+    for i, (pw, cid, n) in enumerate(rows[:10], 1):
+        c = countries.COUNTRIES[cid]
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{t.fa(i)}.")
+        npc = "" if n else " 🤖"
+        lines.append(f"{medal} {c['flag']} {c['name']} — {t.fa(pw)}{npc}")
     return "\n".join(lines)
 
 

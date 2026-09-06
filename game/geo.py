@@ -65,10 +65,21 @@ def occupy(cid: str, city: str, by: str):
         occ.append(city)
         import json
         db.kv_set(f"occupied:{cid}", json.dumps(occ, ensure_ascii=False))
+        occs = db.jload(db.kv_get("occupations"), []) or []
+        occs = [o for o in occs if not (o.get("city") == city and o.get("cid") == cid)]
+        occs.append(dict(city=city, cid=cid, by=by, ts=db.now()))
+        db.kv_set("occupations", json.dumps(occs, ensure_ascii=False))
         import countries
         c = countries.COUNTRIES[by]
         return (f"🏚 <b>{city}</b> اشغال شد توسط {c['flag']} {c['name']}!")
     return None
+
+
+def held_by(cid: str):
+    """شهرهای اشغال‌شده به دست این کشور."""
+    import db
+    return [o for o in db.jload(db.kv_get("occupations"), []) or []
+            if o.get("by") == cid]
 
 
 def country_map(cid: str) -> str:

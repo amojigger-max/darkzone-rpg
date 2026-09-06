@@ -135,18 +135,40 @@ def spy(uid, target: str) -> str:
         return f"⏳ شبکه‌ی جاسوسی در حال بازسازی است — {SPY_COOLDOWN // 60} دقیقه."
     db.kv_set(f"spy:{uid}", str(db.now()))
     my = countries.COUNTRIES[p["country"]]
-    chance = 0.35 + (my["tech"] - tc["tech"]) * 0.12
+    chance = max(0.15, 0.35 + (my["tech"] - tc["tech"]) * 0.12)
     db.ex("UPDATE users SET spy_ops=spy_ops+1 WHERE uid=?", (uid,))
     from game import quests
     quests.on_event(uid, "جاسوسی")
     if random.random() < chance:
-        info = random.choice([
-            f"📅 برنامه‌ی رزمی {tc['name']} لو رفت — حمله در راه است",
-            f"💰 خزانه‌ی {tc['name']} در حال خالی شدن است",
-            f"🚀 {tc['name']} تجهیزات نو وارد زرادخانه کرده",
-            f"🤝 {tc['name']} در حال عقد پیمان پنهانی است",
-            f"🔴 در {tc['name']} شورشی در حال شکل‌گیری است",
-        ])
+        from game import defense as _d, geo as _g
+        kind = random.choice(["shield", "ammo", "cities", "plan"])
+        if kind == "shield":
+            _d.ensure(target)
+            rr = db.q("SELECT layer, level FROM defense WHERE cid=? "
+                      "ORDER BY level DESC LIMIT 3", (target,))
+            info = "🛡 سپر ملی‌شان: " + " · ".join(
+                f"{r['layer']} {texts.fa(r['level'])}" for r in rr)
+        elif kind == "ammo":
+            from game import war as _w
+            wr = _w.war_of(target)
+            if wr:
+                am = int(db.kv_get(f"ammo:{wr['id']}:{target}", "0") or 0)
+                info = (f"🎯 مهمات {tc['name']} در جنگ جاری: "
+                        f"{texts.fa(am)}/{texts.fa(_w._ammo_total(target))}")
+            else:
+                info = f"🕊 {tc['name']} در هیچ جنگی نیست"
+        elif kind == "cities":
+            occ = _g.occupied(target)
+            info = ("🏚 شهرهای اشغال‌شده‌ی آن‌ها: " + " · ".join(occ)) if occ \
+                else "🟢 همه‌ی شهرهایشان آزاد است"
+        else:
+            info = random.choice([
+                f"📅 برنامه‌ی رزمی {tc['name']} لو رفت — حمله در راه است",
+                f"💰 خزانه‌ی {tc['name']} در حال خالی شدن است",
+                f"🚀 {tc['name']} تجهیزات نو وارد زرادخانه کرده",
+                f"🤝 {tc['name']} در حال عقد پیمان پنهانی است",
+                f"🔴 در {tc['name']} شورشی در حال شکل‌گیری است",
+            ])
         db.ex("INSERT INTO spyops(uid,target,success,info,ts) VALUES(?,?,1,?,?)",
               (uid, target, info, db.now()))
         return (f"🕵️ <b>عملیات موفق</b> در {tc['flag']} {tc['name']}\n"

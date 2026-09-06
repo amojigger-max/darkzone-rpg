@@ -95,6 +95,8 @@ def strengthen(uid: int, layer: str) -> str:
         return "🏆 این لایه در اوج است."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
     restore(cid, layer, 3)
+    from game import quests
+    quests.on_event(uid, "پدافند")
     c = countries.COUNTRIES[cid]
     return (f"🛡 {LAYERS[layer]} لایه‌ی <b>{layer}</b> کشور {c['flag']} {c['name']} "
             f"تقویت شد!\nسطح: {texts.fa(lvl)} ← <b>{texts.fa(level(cid, layer))}</b> · "

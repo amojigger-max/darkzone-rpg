@@ -253,6 +253,10 @@ async def main():
         T(f"guide:{cid}", "تخصص" in g and "راهبرد" in g, g[:80])
     out = await cmd("راهنما آمریکا", uid)
     T("راهنما آمریکا", "راهنمای آمریکا" in out, out)
+    out = await cmd("قدرت", uid)
+    T("قدرت کشورها", "قدرت نظامی" in out, out)
+    out = await cb(uid, "mn:power")
+    T("mn:power", "قدرت نظامی" in out, out)
     out = war.world_status()
     T("جهان ۲۱ کشور", out.count("🤖") + out.count(":") >= 20, out[:100])
     for _ in range(30):

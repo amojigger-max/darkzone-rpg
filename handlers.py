@@ -191,7 +191,7 @@ def kb_world() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🗺 وضعیت جهان", callback_data="mn:wstat"),
          InlineKeyboardButton(text="🏆 رتبه", callback_data="mn:lb")],
-        [InlineKeyboardButton(text="📈 بازار", callback_data="mn:market"),
+        [InlineKeyboardButton(text="🥇 قدرت کشورها", callback_data="mn:power"),
          InlineKeyboardButton(text="🏙 نقشه‌ی کشور", callback_data="mn:map")],
         [InlineKeyboardButton(text="📰 اخبار", callback_data="mn:news"),
          InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front")],
@@ -393,6 +393,8 @@ async def cb_menu(c: CallbackQuery):
         await _edit(c, texts.hdr("فرماندهی جنگ", "⚔️") + "\nنوع حمله:", kb_strikes())
     elif what == "wstat":
         await _edit(c, war.world_status(), kb_world())
+    elif what == "power":
+        await _edit(c, war.power_rank(), kb_world())
     elif what == "lb":
         await _edit(c, war.leaderboard(), kb_world())
     elif what == "market":
@@ -635,6 +637,8 @@ async def fa_words(m: Message):
         return await m.answer(economy.market(), parse_mode="HTML", reply_markup=kb_world())
     if w == "جهان":
         return await m.answer(war.world_status(), parse_mode="HTML", reply_markup=kb_world())
+    if w in ("قدرت", "قدرت‌ها", "رتبه‌کشورها"):
+        return await m.answer(war.power_rank(), parse_mode="HTML", reply_markup=kb_world())
     if w in ("رتبه", "برترین"):
         return await m.answer(war.leaderboard(), parse_mode="HTML", reply_markup=kb_world())
     if w == "نقشه":
