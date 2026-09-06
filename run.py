@@ -2,7 +2,6 @@
 import asyncio
 import contextlib
 import os
-import subprocess
 import time
 import traceback
 
@@ -119,35 +118,31 @@ async def events_loop(bot: Bot):
 
 
 async def autosave_loop():
-    """💾 ذخیره‌ی دوره‌ای دیتابیس در ریپو — هر ۵ دقیقه، با rebase ضدتعارض."""
+    """💾 ذخیره‌ی دوره‌ی دیتابیس — هر ۵ دقیقه از طریق API گیت‌هاب."""
     if not os.environ.get("INLOOP_AUTOSAVE"):
         return
+    import hashlib
+    import save_db
     iv = int(os.environ.get("AUTOSAVE_MIN", "5")) * 60
-    url = "https://x-access-token:{}@github.com/amojigger-max/darkzone-rpg.git"
+    pat = os.environ.get("PAT", "")
+    last = {"h": None}
     while True:
         await asyncio.sleep(iv)
         try:
-            subprocess.run(["git", "config", "user.name", "ww-bot"], check=False)
-            subprocess.run(["git", "config", "user.email", "bot@ww"], check=False)
-            import sqlite3 as sq
-            sq.connect(config.DB_PATH).execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            subprocess.run(["git", "add", "-f", config.DB_PATH], check=False,
-                           capture_output=True)
-            subprocess.run(["git", "commit", "-m", "autosave"], check=False,
-                           capture_output=True)
-            pat = os.environ.get("PAT", "")
-            u = url.format(pat)
-            r1 = subprocess.run(["git", "pull", "--rebase", "-X", "theirs", u, "main"],
-                                check=False, capture_output=True, text=True)
-            r2 = subprocess.run(["git", "push", u, "HEAD:main"],
-                                check=False, capture_output=True, text=True)
-            if r2.returncode != 0:
-                print("autosave push failed:", (r2.stderr or "")[-300:], flush=True)
-                db.log("error", "autosave push: " + (r2.stderr or "")[-200:])
-            else:
+            data = save_db.checkpoint()
+            h = hashlib.sha256(data).hexdigest()
+            if h == last["h"]:
+                continue                      # تغییری نکرده
+            if save_db.put(pat, data):
+                last["h"] = h
                 db.log("info", "autosave ok")
+                print("💾 autosave ok", flush=True)
+            else:
+                db.log("error", "autosave put failed")
+                print("autosave put failed", flush=True)
         except Exception:
             db.log("error", "autosave failed: " + traceback.format_exc()[-200:])
+            print("autosave failed:", traceback.format_exc()[-300:], flush=True)
 
 
 async def main():
