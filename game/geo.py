@@ -69,6 +69,9 @@ def occupy(cid: str, city: str, by: str):
         occs = [o for o in occs if not (o.get("city") == city and o.get("cid") == cid)]
         occs.append(dict(city=city, cid=cid, by=by, ts=db.now()))
         db.kv_set("occupations", json.dumps(occs, ensure_ascii=False))
+        # ⛓ آخرین شهر سقوط کند → مستعمره‌ی رسمی
+        if occ and set(occ) >= set(CITIES.get(cid, [])) and not colony_of(cid):
+            return colonize(cid, by)
         import countries
         c = countries.COUNTRIES[by]
         return (f"🏚 <b>{city}</b> اشغال شد توسط {c['flag']} {c['name']}!")
@@ -80,6 +83,45 @@ def held_by(cid: str):
     import db
     return [o for o in db.jload(db.kv_get("occupations"), []) or []
             if o.get("by") == cid]
+    """شهرهای اشغال‌شده به دست این کشور."""
+    import db
+    return [o for o in db.jload(db.kv_get("occupations"), []) or []
+            if o.get("by") == cid]
+
+
+def colony_of(cid: str):
+    """اشغال‌گر این کشور — یا None."""
+    import db
+    v = db.kv_get(f"colony:{cid}", "")
+    return v or None
+
+
+def colonies_of(by: str) -> list:
+    """مستعمره‌های یک کشور."""
+    import db
+    return [r["k"].split(":")[1] for r in
+            db.q("SELECT k, v FROM kv WHERE k LIKE 'colony:%' AND v=?", (by,))
+            if r["k"].split(":")[1] in __import__("countries").COUNTRIES]
+
+
+def colonize(cid: str, by: str) -> str:
+    import db, countries
+    db.kv_set(f"colony:{cid}", by)
+    c, b = countries.COUNTRIES[cid], countries.COUNTRIES[by]
+    return (f"⛓ <b>{c['flag']} {c['name']} رسماً مستعمره‌ی "
+            f"{b['flag']} {b['name']} شد!</b>\n"
+            f"خراج روزانه جاری است — مردمش زیر یوغ‌اند.")
+
+
+def free_colony(cid: str):
+    """آزادسازی — شهرها آزاد، یوغ برداشته."""
+    import db
+    db.kv_set(f"colony:{cid}", "")
+    db.kv_set(f"occupied:{cid}", "[]")
+    occs = db.jload(db.kv_get("occupations"), []) or []
+    occs = [o for o in occs if o.get("cid") != cid]
+    import json
+    db.kv_set("occupations", json.dumps(occs, ensure_ascii=False))
 
 
 def country_map(cid: str) -> str:

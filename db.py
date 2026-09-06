@@ -94,6 +94,14 @@ def init(path: str = None):
             _local.con.close()
             _local.con = None
     con().executescript(SCHEMA)
+    # ⚡ ایندکس‌های سرعت — ۱۰۰۰ بازیکن همزمان
+    con().executescript("""
+CREATE INDEX IF NOT EXISTS ix_users_country ON users(country);
+CREATE INDEX IF NOT EXISTS ix_users_active ON users(last_active);
+CREATE INDEX IF NOT EXISTS ix_users_level ON users(level DESC);
+CREATE INDEX IF NOT EXISTS ix_wars_status ON wars(status);
+CREATE INDEX IF NOT EXISTS ix_inv_uid ON inventory(uid);
+""")
     con().commit()
 
 

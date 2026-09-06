@@ -35,6 +35,8 @@ def alliance_request(leader_uid: int, target: str) -> str:
         return "👑 فقط رهبر کشور می‌تواند اتحاد پیشنهاد کند."
     if target == p["country"]:
         return "⛔ با خودت؟"
+    if target not in countries.COUNTRIES:
+        return "⛔ کشور نامعتبر."
     import json
     pend = db.jload(db.kv_get("alliance_pending"), {}) or {}
     pend[str(target)] = p["country"]
@@ -115,6 +117,47 @@ def peace_accept(uid) -> str:
     a, b = countries.COUNTRIES[wr["a"]], countries.COUNTRIES[wr["b"]]
     return (f"🕊 <b>پیمان صلح!</b>\n{a['flag']} {a['name']} ⇄ {b['flag']} {b['name']}\n"
             f"جنگ پایان یافت — بازار نفس کشید.")
+
+
+def surrender(uid) -> str:
+    """🏳 تسلیم — پایان جنگ با گران‌ترین بهاء: غرامت سنگین، شهرها می‌ماند، تحقیر."""
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        return "👑 فقط رهبر کشور."
+    w = war_of(p["country"])
+    if not w:
+        return "🕊 کشورت در جنگ نیست."
+    cid = p["country"]
+    enemy = _enemy(cid, w)
+    mine = w["score_a"] if w["a"] == cid else w["score_b"]
+    theirs = w["score_b"] if w["a"] == cid else w["score_a"]
+    if mine >= theirs:
+        return "🏆 داری می‌بری! چرا تسلیم؟ صلحِ برابر: «صلح»"
+    db.ex("UPDATE wars SET status='won', winner=? WHERE id=?", (enemy, w["id"]))
+    # 🏳 غرامت جنگ: بازندگان می‌پردازند، برندگان می‌گیرند
+    reps = 600 + (theirs - mine) * 40
+    for r in db.q("SELECT uid FROM users WHERE country=?", (cid,)):
+        db.ex("UPDATE users SET money=MAX(0,money-?) WHERE uid=?", (reps, r["uid"]))
+    for r in db.q("SELECT uid FROM users WHERE country=?", (enemy,)):
+        db.ex("UPDATE users SET money=money+? WHERE uid=?", (reps, r["uid"]))
+        state.gain_xp(r["uid"], reps // 3)
+    mc, ec = countries.COUNTRIES[cid], countries.COUNTRIES[enemy]
+    t = texts
+    lines = [t.hdr("تسلیم", "🏳"),
+             f"{mc['flag']} {mc['name']} در برابر {ec['flag']} {ec['name']} تسلیم شد",
+             t.K,
+             f"💰 غرامت هر سرباز: {t.money(cid, -reps)}",
+             f"🏆 برندگان: +{t.money(enemy, reps)} هر سرباز",
+             "🏚 شهرهای اشغال‌شده دست برنده می‌ماند."]
+    # ⛓ اگر همه‌ی شهرها رفته → مستعمره‌ی رسمی
+    from game import geo as _g
+    occ = _g.occupied(cid)
+    if occ and set(occ) >= set(_g.CITIES.get(cid, [])):
+        lines.append("")
+        lines.append(_g.colonize(cid, enemy))
+    db.ex("DELETE FROM alliances WHERE (a=? AND b=?) OR (a=? AND b=?)",
+          (cid, enemy, enemy, cid))
+    return "\n".join(lines)
 
 
 # ═══════════ نبرد تن‌به‌تن (PvP) ═══════════
@@ -312,6 +355,13 @@ def army(uid) -> str:
             for r in brs))
     if economy.sanctioned(cid):
         lines.append("🚫 کشورت تحت تحریم اقتصادی است!")
+    col = geo.colony_of(cid)
+    if col:
+        cc = countries.COUNTRIES[col]
+        lines.append(f"⛓ کشورت مستعمره‌ی {cc['flag']} {cc['name']} است — جیره ۳۰٪ مالیات!")
+    mine = geo.colonies_of(cid)
+    if mine:
+        lines.append(f"👑 مستعمره‌های تو: {t.fa(len(mine))} — خراج می‌گیرید")
     w = war_of(cid)
     if w:
         _init_ammo(w)
@@ -436,7 +486,7 @@ def settle():
                   (win, lose, lose, win))
             # 🎁 غنیمت جنگ — سربازان برنده پاداش می‌گیرند، بازندگان می‌پردازند
             prize = 400 + int(max(w["score_a"], w["score_b"])) * 35 \
-                + len(geo.held_by(win)) * 100
+                + len(geo.held_by(win)) * 100 + len(geo.colonies_of(win)) * 150
             for r in db.q("SELECT uid FROM users WHERE country=?", (win,)):
                 db.ex("UPDATE users SET money=money+? WHERE uid=?",
                       (prize, r["uid"]))
@@ -444,8 +494,12 @@ def settle():
             for r in db.q("SELECT uid FROM users WHERE country=?", (lose,)):
                 db.ex("UPDATE users SET money=MAX(0,money-?) WHERE uid=?",
                       (150, r["uid"]))
-            out.append(f"🎁 غنیمت جنگ: هر سرباز {wc['name']} → 💰 {texts.fa(prize)}"
-                       f" · سربازان بازنده −{texts.fa(150)}")
+            out.append(f"🎁 غنیمت جنگ: هر سرباز {wc['name']} → "
+                       f"💰 {texts.fa(prize)} ({texts.money(win, prize)})")
+            # ⛓ مستعمره‌ای که بر ضد اشغال‌گرش پیروز شد → آزاد!
+            if geo.colony_of(win) == lose:
+                geo.free_colony(win)
+                out.append(f"🕊 {wc['flag']} {wc['name']} یوغ مستعمره را شکست — آزاد شد!")
     return out
 
 
@@ -460,6 +514,9 @@ def world_status() -> str:
     def _cell(cid):
         c = countries.COUNTRIES[cid]
         n = counts.get(cid, 0)
+        col = geo.colony_of(cid)
+        if col and col in countries.COUNTRIES:
+            return f"{c['flag']} {c['name']}: ⛓ {countries.COUNTRIES[col]['flag']}"
         return f"{c['flag']} {c['name']}: {n if n else '🤖'}"
     for a, b in zip(cids[::2], cids[1::2]):
         lines.append(_cell(a) + " · " + _cell(b))
@@ -477,6 +534,30 @@ def world_status() -> str:
     return "\n".join(lines)
 
 
+def colonies() -> str:
+    """⛓ نقشه‌ی مستعمره‌های جهان."""
+    import countries as _c
+    t = texts
+    rows = db.q("SELECT k, v FROM kv WHERE k LIKE 'colony:%' AND v != ''")
+    if not rows:
+        return t.hdr("مستعمره‌های جهان", "⛓") + "\n🕊 مستعمره‌ای نیست — " \
+               "جنگ بگیر، همه‌ی شهرهای دشمن را تصرف کن!"
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["v"], []).append(r["k"].split(":")[1])
+    lines = [t.hdr("مستعمره‌های جهان", "⛓"), ""]
+    for by, cids in sorted(groups.items(), key=lambda x: -len(x[1])):
+        b = _c.COUNTRIES.get(by)
+        if not b:
+            continue
+        names = " · ".join(f"{_c.COUNTRIES[c]['flag']} {_c.COUNTRIES[c]['name']}"
+                           for c in cids if c in _c.COUNTRIES)
+        lines.append(f"👑 {b['flag']} {b['name']} ({t.fa(len(cids))}):\n   {names}")
+    lines += ["", "💡 مستعمره: ۳۰٪ مالیات جیره‌ی مردمش · خراج برای اشغال‌گر",
+              "🕊 آزادی: مستعمره در جنگ بعدی بر ضد اشغال‌گرش پیروز شود"]
+    return "\n".join(lines)
+
+
 def power_rank() -> str:
     """🥇 رتبه‌بندی نظامی کشورها — سرباز، تجهیزات، سپر، اشغال، پیروزی."""
     t = texts
@@ -491,7 +572,8 @@ def power_rank() -> str:
         sh = db.one("SELECT AVG(level) a FROM defense WHERE cid=?", (cid,))["a"] or 0
         held = len(geo.held_by(cid))
         won = db.one("SELECT COUNT(*) n FROM wars WHERE winner=?", (cid,))["n"]
-        power = n * 12 + atk // 8 + int(sh) * 2 + held * 6 + won * 40
+        cols = len(geo.colonies_of(cid)) * 80 - (40 if geo.colony_of(cid) else 0)
+        power = n * 12 + atk // 8 + int(sh) * 2 + held * 6 + won * 40 + cols
         rows.append((power, cid, n))
     rows.sort(reverse=True)
     lines = [t.hdr("قدرت نظامی کشورها", "🥇"), ""]

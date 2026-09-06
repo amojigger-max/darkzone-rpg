@@ -62,6 +62,23 @@ def sanction_shock(cid: str):
     db.kv_set(f"sanction:{cid}", str(db.now()))
 
 
+def fx(cid: str) -> float:
+    """💱 نرخ زنده‌ی پول هر کشور — جنگ، تحریم و تورم آن را بالا و پایین می‌برد.
+
+    نرخ بالا = پول ضعیف‌تر (برای هر سکه، پولِ بیشتری می‌شماری).
+    """
+    import countries
+    base = countries.CURRENCIES.get(cid, ("دلار", 1.0))[1]
+    mult = 1.0
+    w = world()
+    mult *= 1 + w["inflation"] * 0.4              # تورم جهانی
+    if db.one("SELECT 1 FROM wars WHERE status='active' AND (a=? OR b=?)", (cid, cid)):
+        mult *= 1.15                              # جنگ → پول ضعیف
+    if sanctioned(cid):
+        mult *= 1.20                              # تحریم → پول ضعیف‌تر
+    return base * mult
+
+
 def sanctioned(cid: str) -> bool:
     ts = int(db.kv_get(f"sanction:{cid}", "0") or 0)
     return ts and db.now() - ts < 24 * 3600

@@ -77,5 +77,6 @@ def claim(uid) -> str:
     db.kv_set(f"quest:{uid}", json.dumps(st, ensure_ascii=False))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (total, uid))
     state.gain_xp(uid, total // 3)
-    return (f"🎁 جایزه‌ی مأموریت: 💰 {texts.fa(total)}\n"
-            f"خزانه: {texts.fa(state.get(uid)['money'])}")
+    p2 = state.get(uid)
+    return (f"🎁 جایزه‌ی مأموریت: 💰 {texts.money(p2['country'], total)}\n"
+            f"خزانه: {texts.money(p2['country'], p2['money'])}")

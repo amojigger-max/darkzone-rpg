@@ -182,10 +182,10 @@ def loadout(uid):
 
 # ═══════════ رزم ═══════════
 
-ENEMIES = [("گروه شبه‌نظامی", 60, 10), ("گروه شناسایی دشمن", 90, 14),
-           ("کاروان زرهی", 140, 20), ("پایگاه مرزی", 200, 26),
-           ("نیروی ویژه دشمن", 280, 34), ("تکاوران گارد ویژه", 360, 42),
-           ("لشکر مکانیزه", 460, 50), ("ستاد فرماندهی دشمن", 600, 60)]
+ENEMIES = [("گروه شبه‌نظامی", 70, 12), ("گروه شناسایی دشمن", 105, 16),
+           ("کاروان زرهی", 160, 23), ("پایگاه مرزی", 230, 30),
+           ("نیروی ویژه دشمن", 320, 39), ("تکاوران گارد ویژه", 410, 48),
+           ("لشکر مکانیزه", 530, 58), ("ستاد فرماندهی دشمن", 690, 69)]
 
 
 def battle(uid, tier: int = None) -> str:
@@ -243,7 +243,7 @@ def battle(uid, tier: int = None) -> str:
             t.row("دشمن", name),
             t.row("تخصص", f"🎖 {mname}"), "",
             *log[:6], "",
-            t.row("غنیمت", f"💰 {t.fa(loot)} · ⭐ {t.fa(xp)} XP"),
+            t.row("غنیمت", f"💰 {t.money(p['country'], loot)} · ⭐ {t.fa(xp)} XP"),
             t.row("جان", f"❤️ {p['hp']}/{p['max_hp']}")])
     db.ex("UPDATE users SET hp=MAX(10,hp) WHERE uid=?", (uid,))
     return "\n".join([
@@ -259,6 +259,10 @@ def rest(uid) -> str:
         return "⛔ اول «شروع»"
     if db.now() - int(db.kv_get(f"rest:{uid}", "0")) < 120:
         return "⏳ استراحت داده شد — ۲ دقیقه صبر کن."
+    cost = 200                                   # سخت‌تر — درمان دیگر رایگان نیست
+    if p["money"] < cost:
+        return f"💰 درمان {texts.money(p['country'], cost)} می‌ارزد — جیره بگیر یا بجنگ."
     db.kv_set(f"rest:{uid}", str(db.now()))
-    db.ex("UPDATE users SET hp=max_hp WHERE uid=?", (uid,))
-    return f"🏥 جان کامل شد: ❤️ {p['max_hp']}/{p['max_hp']}"
+    db.ex("UPDATE users SET hp=max_hp, money=money-? WHERE uid=?", (cost, uid))
+    return (f"🏥 جان کامل شد: ❤️ {texts.fa(p['max_hp'])}/{texts.fa(p['max_hp'])}\n"
+            f"هزینه: {texts.money(p['country'], cost)}")

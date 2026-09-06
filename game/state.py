@@ -74,7 +74,7 @@ def card(uid) -> str:
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
         t.row("درجه", countries.rank_name(p["level"])),
         t.row("سطح", f"{t.fa(p['level'])} · تجربه {t.fa(p['xp'])}/{t.fa(xp_need(p['level']))}"),
-        t.row("خزانه", f"💰 {t.fa(p['money'])}"),
+        t.row("خزانه", f"💰 {t.money(p['country'], p['money'])}"),
         t.row("جان", f"❤️ {t.fa(p['hp'])}/{t.fa(p['max_hp'])}"),
         t.row("سوابق", f"⚔️ {t.fa(p['kills'])} کشته · 🕵 {t.fa(p['spy_ops'])} جاسوسی"),
         t.row("حزب", party["name"] if party else "—"),
@@ -101,6 +101,16 @@ def medals(uid) -> str:
     return "🏅 " + " · ".join(out) if out else ""
 
 
+def geo_colony(cid):
+    from game import geo
+    return geo.colony_of(cid)
+
+
+def geo_colonies(cid):
+    from game import geo
+    return geo.colonies_of(cid)
+
+
 def ration(uid) -> str:
     """جیره‌ی روزانه + زنجیره‌ی حضور — روزهای پیوسته جایزه‌ی بیشتر."""
     p = active(uid)
@@ -115,7 +125,20 @@ def ration(uid) -> str:
         streak += 1
     else:
         streak = 1
-    amount = 500 + min(7, streak) * 150      # روز ۷+: ۱۵۵۰
+    import countries
+    t = texts
+    amount = 350 + min(7, streak) * 120      # سخت‌تر — روز ۷+: ۱۱۹۰
+    tax_note = ""
+    col = geo_colony(p["country"])
+    if col:                                    # ⛓ زیر یوغ مستعمره
+        cut = amount * 3 // 10
+        amount -= cut
+        tax_note = f"\n⛓ مالیات مستعمره‌ای به {countries.COUNTRIES[col]['name']}: −{t.fa(cut)}"
+    mine = geo_colonies(p["country"])
+    if mine:                                   # 👑 خراج مستعمره‌ها
+        add = amount * len(mine) // 6
+        amount += add
+        tax_note = f"\n👑 خراج {t.fa(len(mine))} مستعمره: +{t.fa(add)}"
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (amount, uid))
     db.kv_set(f"ration:{uid}", str(day))
     db.kv_set(f"streak:{uid}", str(streak))
@@ -125,6 +148,7 @@ def ration(uid) -> str:
     bonus = ""
     if streak >= 3 and _r.random() < 0.35:
         bonus = "\n🎁 صندوق ویژه‌ی حضور: یک تجهیز رایگان شانس داشت! (بگذار شانس بسنجد)"
-    return (f"🍞 جیره‌ی روزانه: 💰 +{texts.fa(amount)}\n"
+    cur = texts.money(p["country"], amount)
+    return (f"🍞 جیره‌ی روزانه: {cur}\n"
             f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"
-            f"خزانه: {texts.fa(get(uid)['money'])}{bonus}")
+            f"خزانه: {texts.money(p['country'], get(uid)['money'])}{tax_note}{bonus}")

@@ -90,7 +90,7 @@ def strengthen(uid: int, layer: str) -> str:
     lvl = level(cid, layer)
     cost = 350 + lvl * 9
     if p["money"] < cost:
-        return f"💰 پول کم است — نیاز: {texts.fa(cost)}"
+        return f"💰 پول کم است — نیاز: {texts.money(cid, cost)}"
     if lvl >= 95:
         return "🏆 این لایه در اوج است."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
@@ -100,7 +100,7 @@ def strengthen(uid: int, layer: str) -> str:
     c = countries.COUNTRIES[cid]
     return (f"🛡 {LAYERS[layer]} لایه‌ی <b>{layer}</b> کشور {c['flag']} {c['name']} "
             f"تقویت شد!\nسطح: {texts.fa(lvl)} ← <b>{texts.fa(level(cid, layer))}</b> · "
-            f"💰 −{texts.fa(cost)}")
+            f"💰 {texts.money(cid, -cost)}")
 
 
 def status(cid: str) -> str:

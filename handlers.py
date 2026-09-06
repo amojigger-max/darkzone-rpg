@@ -57,6 +57,35 @@ def kb_admin() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
+def _admin_callup_parts() -> list:
+    """📣 اعلام‌نظام — همه‌ی سربازان با تگ، گروه‌بندی با کشور (تکه‌های امن)."""
+    rows = db.q("SELECT uid, name, country, level FROM users "
+                "WHERE country IS NOT NULL ORDER BY country, level DESC")
+    t = texts
+    if not rows:
+        return ["هنوز بازیکنی ثبت نشده — «ثبت آیدی کشور»"]
+    groups = {}
+    for r in rows:
+        groups.setdefault(r["country"], []).append(r)
+    parts, cur = [], [t.hdr("اعلام عمومی سربازان", "📣"),
+                      "به میدان بیایید — جنگ جهانی آغاز شده!", ""]
+    for cid in sorted(groups, key=lambda c: -len(groups[c])):
+        c = countries.COUNTRIES.get(cid)
+        if not c:
+            continue
+        tags = " ".join(t.mention(r["uid"], (r["name"] or "سرباز")[:20])
+                        for r in groups[cid])
+        block = [f"{c['flag']} <b>{c['name']}</b> ({t.fa(len(groups[cid]))}):",
+                 tags, ""]
+        if len("\n".join(cur + block)) > 3500:
+            parts.append("\n".join(cur))
+            cur = []
+        cur += block
+    cur.append("🎮 در گروه بنویس: «منو»")
+    parts.append("\n".join(cur))
+    return parts
+
+
 def _admin_stats() -> str:
     n = db.one("SELECT COUNT(*) c FROM users WHERE country IS NOT NULL")["c"]
     wars = db.one("SELECT COUNT(*) c FROM wars WHERE status='active'")["c"]
@@ -192,6 +221,8 @@ def kb_world() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🗺 وضعیت جهان", callback_data="mn:wstat"),
          InlineKeyboardButton(text="🏆 رتبه", callback_data="mn:lb")],
         [InlineKeyboardButton(text="🥇 قدرت کشورها", callback_data="mn:power"),
+         InlineKeyboardButton(text="⛓ مستعمره‌ها", callback_data="mn:colonies")],
+        [InlineKeyboardButton(text="📈 بازار", callback_data="mn:market"),
          InlineKeyboardButton(text="🏙 نقشه‌ی کشور", callback_data="mn:map")],
         [InlineKeyboardButton(text="📰 اخبار", callback_data="mn:news"),
          InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front")],
@@ -332,7 +363,10 @@ async def _edit(c: CallbackQuery, text: str, kb=None):
 
 @router.callback_query(F.data.startswith("hp:"))
 async def cb_helppage(c: CallbackQuery):
-    page = int(c.data.split(":")[1])
+    try:
+        page = max(1, min(len(texts.HELP_PAGES), int(c.data.split(":")[1])))
+    except ValueError:
+        page = 1
     await _edit(c, texts.HELP_PAGES[page - 1], kb_help(page))
     await c.answer()
 
@@ -395,6 +429,8 @@ async def cb_menu(c: CallbackQuery):
         await _edit(c, war.world_status(), kb_world())
     elif what == "power":
         await _edit(c, war.power_rank(), kb_world())
+    elif what == "colonies":
+        await _edit(c, war.colonies(), kb_world())
     elif what == "lb":
         await _edit(c, war.leaderboard(), kb_world())
     elif what == "market":
@@ -460,6 +496,9 @@ async def cb_branch(c: CallbackQuery):
 async def cb_buy(c: CallbackQuery):
     uid = c.from_user.id
     iid = c.data.split(":")[1]
+    if iid not in countries.ITEMS:
+        await c.answer("⛔ تجهیز نامعتبر", show_alert=True)
+        return
     it = countries.ITEMS[iid]
     p = state.active(uid)
     if not p:
@@ -467,7 +506,9 @@ async def cb_buy(c: CallbackQuery):
         return
     price = economy.real_price(it[5])
     if p["money"] < price:
-        await c.answer(f"💰 پول کم — {texts.fa(price)} لازم است", show_alert=True)
+        p_ = state.get(uid)
+        await c.answer(f"💰 پول کم — {texts.money(p_['country'] if p_ else 'us', price)} لازم است",
+                       show_alert=True)
         return
     if not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
         db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
@@ -535,13 +576,10 @@ async def _ev_claim(m: Message, word: str):
 
 # ═══════════ 🗣 دستورهای متنی فارسی ═══════════
 
-FA = {
-    "شروع": cmd_start,
-}
-
-
 async def fa_words(m: Message):
     t = (m.text or "").strip()
+    if not t:
+        return
     parts = t.split(maxsplit=1)
     w = parts[0]
     arg = parts[1] if len(parts) > 1 else ""
@@ -660,6 +698,12 @@ async def fa_words(m: Message):
         return await m.answer(ai.news_feed(), parse_mode="HTML", reply_markup=kb_world())
     if w == "ارتش":
         return await m.answer(war.army(uid), parse_mode="HTML", reply_markup=kb_world())
+    if w in ("اعلام", "سربازها", "توزیع"):
+        if uid != config.OWNER_ID:
+            return await m.answer("👑 فقط مالک!", parse_mode="HTML")
+        for part in _admin_callup_parts():
+            await m.answer(part, parse_mode="HTML")
+        return
     if w in ("مدیریت", "ادمین"):
         if uid != config.OWNER_ID:
             return await m.answer("👑 فقط مالک!", parse_mode="HTML")
@@ -702,6 +746,10 @@ async def fa_words(m: Message):
                               reply_markup=kb_mil())
     if w == "صلح":
         return await m.answer(war.peace_request(uid), parse_mode="HTML", reply_markup=kb_pol())
+    if w == "تسلیم":
+        return await m.answer(war.surrender(uid), parse_mode="HTML", reply_markup=kb_pol())
+    if w in ("مستعمره", "مستعمره‌ها", "مستعمرات"):
+        return await m.answer(war.colonies(), parse_mode="HTML", reply_markup=kb_world())
     if w in ("راهنما", "کمک"):
         if arg:
             cid2 = _find_country(arg)
