@@ -36,7 +36,7 @@ def put(pat: str, data: bytes = None) -> bool:
             sha = json.load(r).get("sha")
     except Exception:
         pass                                   # هنوز در ریپو نیست — ایجاد
-    body = json.dumps({"message": "autosave db", "branch": "main",
+    body = json.dumps({"message": "autosave db [skip ci]", "branch": "main",
                        "content": base64.b64encode(data).decode(),
                        **({"sha": sha} if sha else {})}).encode()
     req = urllib.request.Request(API, data=body, method="PUT", headers=hdr)
