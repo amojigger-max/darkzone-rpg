@@ -103,6 +103,10 @@ def _admin_stats() -> str:
         "➕ ثبت بازیکن: <code>ثبت آیدی کشور</code>",
         "مثال: <code>ثبت 8694290031 ایران</code>",
         "",
+        "👑 رهبر کشور: <code>رهبر آیدی کشور</code>",
+        "مثال: <code>رهبر 8694290031 آمریکا</code>",
+        "خلع ← NPC: <code>رهبر خالی آمریکا</code>",
+        "",
         "🔄 تغییر کشور: <code>تغییر آیدی کشور</code>",
         "مثال: <code>تغییر 8694290031 روسیه</code>"])
 
@@ -131,6 +135,37 @@ def _admin_change(uid_target: int, country_name: str) -> str:
     db.ex("UPDATE users SET country=? WHERE uid=?", (cid, uid_target))
     c = countries.COUNTRIES[cid]
     return f"🔄 کشور بازیکن <code>{uid_target}</code> ← {c['flag']} {c['name']}"
+
+
+def _admin_leader(arg: str) -> str:
+    """👑 تعیین/خلع رهبر کشور — با آیدی عددی یا «خالی» برای NPC."""
+    parts = arg.split()
+    # 👑 خلع: رهبر خالی آمریکا → کشور NPC می‌شود
+    if parts and parts[0] in ("خالی", "-"):
+        cid = _find_country(" ".join(parts[1:]))
+        if not cid:
+            return "⛔ کشور نامعتبر — مثال: <code>رهبر خالی آمریکا</code>"
+        c = countries.COUNTRIES[cid]
+        db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
+        return f"♻️ {c['flag']} {c['name']} بدون رهبر شد — دولت NPC."
+    if len(parts) < 2 or not parts[0].isdigit():
+        return ("🔎 الگو: <code>رهبر آیدی کشور</code> · خلع: <code>رهبر خالی کشور</code>\n"
+                "مثال: <code>رهبر 8694290031 آمریکا</code>")
+    uid_t, cname = int(parts[0]), " ".join(parts[1:])
+    cid = _find_country(cname)
+    if not cid:
+        return "⛔ کشور نامعتبر — مثال: <code>رهبر 8694290031 آمریکا</code>"
+    p = state.get(uid_t)
+    if p and p["country"] and p["country"] != cid:
+        return (f"⛔ {uid_t} در کشور دیگری است — اول: "
+                f"<code>تغییر {uid_t} {countries.COUNTRIES[cid]['name']}</code>")
+    if not p or not p["country"]:
+        if not state.enlist(uid_t, cid, f"Player{uid_t % 1000}"):
+            return "⛔ خطا در ثبت."
+    db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid_t,))
+    c = countries.COUNTRIES[cid]
+    return f"👑 بازیکن <code>{uid_t}</code> رهبر {c['flag']} {c['name']} شد!"
 
 
 @router.callback_query(F.data.startswith("ad:"))
@@ -724,6 +759,13 @@ async def fa_words(m: Message):
             return await m.answer(_admin_change(int(parts3[0]), " ".join(parts3[1:])),
                                   parse_mode="HTML", reply_markup=kb_admin())
         return await m.answer("🔎 الگو: <code>تغییر آیدی کشور</code>", parse_mode="HTML")
+    if w == "رهبر":
+        if uid != config.OWNER_ID:
+            return await m.answer("👑 فقط مالک!", parse_mode="HTML")
+        if not arg:
+            return await m.answer("🔎 الگو: <code>رهبر آیدی کشور</code> · خلع: <code>رهبر خالی کشور</code>",
+                                  parse_mode="HTML")
+        return await m.answer(_admin_leader(arg), parse_mode="HTML", reply_markup=kb_admin())
     if w in ("ماموریت", "مأموریت", "چالش"):
         return await m.answer(quests.view(uid), parse_mode="HTML", reply_markup=kb_mil())
     if w == "جایزه":
