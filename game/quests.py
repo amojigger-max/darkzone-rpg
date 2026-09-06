@@ -41,20 +41,16 @@ def on_event(uid, key: str):
 def view(uid) -> str:
     st = quest_state(uid)
     t = texts
-    lines = [t.hdr("مأموریت‌های روزانه", "🎯"), ""]
+    lines = [t.hdr("مأموریت روزانه", "🎯")]
     all_done = True
     for g in st["goals"]:
         mark = "✅" if g["done"] >= g["need"] else "⏳"
-        lines.append(f"{mark} {g['label']} — {str(g['done']).translate(FA)} از "
-                     f"{str(g['need']).translate(FA)}")
+        lines.append(f"{mark} {g['label']} — {g['done']}/{g['need']}")
         if g["done"] < g["need"]:
             all_done = False
-    lines += [t.K]
     if all_done:
         total = sum(g["prize"] for g in st["goals"])
-        lines.append(f"🎁 همه کامل! جایزه: 💰 {total:,} — «جایزه» را بگیر")
-    else:
-        lines.append("جایزه‌ی هر هدف فقط با «جایزه» پس از کامل شدن")
+        lines.append(f"🎁 آماده! «جایزه» → 💰 {total:,}")
     return "\n".join(lines)
 
 

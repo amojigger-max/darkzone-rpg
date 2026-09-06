@@ -10,7 +10,7 @@ import config
 import countries
 import db
 import texts
-from game import ai, defense, economy, events, geo, military, politics, quests, state, war
+from game import ai, defense, economy, events, geo, guide, military, politics, quests, state, war
 
 router = Router()
 bot: Bot = None
@@ -32,6 +32,23 @@ async def pv_cb_only_group(c: CallbackQuery):
 
 
 # ═══════════ 👑 پنل مدیریت مالک ═══════════
+
+def kb_help(page: int = 1) -> InlineKeyboardMarkup:
+    """📖 راهنمای صفحه‌بندی‌شده — بدون شلوغی."""
+    n = len(texts.HELP_PAGES)
+    page = max(1, min(n, page))
+    row = []
+    if page > 1:
+        row.append(InlineKeyboardButton(text="◀️ قبلی", callback_data=f"hp:{page-1}"))
+    row.append(InlineKeyboardButton(text=f"📖 {page}/{n}",
+                                    callback_data=f"hp:{page}"))
+    if page < n:
+        row.append(InlineKeyboardButton(text="بعدی ▶️", callback_data=f"hp:{page+1}"))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        row,
+        [InlineKeyboardButton(text="📖 راهنمای کشور", callback_data="mn:cguide"),
+         InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+
 
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -180,7 +197,8 @@ def kb_world() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front")],
         [InlineKeyboardButton(text="🪖 ارتش کشور", callback_data="mn:army"),
          InlineKeyboardButton(text="🛡 سپر ملی", callback_data="mn:def")],
-        [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+        [InlineKeyboardButton(text="📖 راهنمای کشور", callback_data="mn:cguide"),
+         InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
 def kb_def() -> InlineKeyboardMarkup:
@@ -312,6 +330,13 @@ async def _edit(c: CallbackQuery, text: str, kb=None):
                                reply_markup=kb or kb_main())
 
 
+@router.callback_query(F.data.startswith("hp:"))
+async def cb_helppage(c: CallbackQuery):
+    page = int(c.data.split(":")[1])
+    await _edit(c, texts.HELP_PAGES[page - 1], kb_help(page))
+    await c.answer()
+
+
 @router.callback_query(F.data.startswith("df:"))
 async def cb_defense(c: CallbackQuery):
     uid = c.from_user.id
@@ -377,6 +402,11 @@ async def cb_menu(c: CallbackQuery):
     elif what == "map":
         p = state.active(uid)
         await _edit(c, geo.country_map(p["country"]) if p else "⛔ اول «شروع»", kb_world())
+    elif what == "help":
+        await _edit(c, texts.HELP_PAGES[0], kb_help(1))
+    elif what == "cguide":
+        p = state.active(uid)
+        await _edit(c, guide.guide(p["country"]) if p else "⛔ اول «شروع»", kb_world())
     elif what == "news":
         await _edit(c, ai.news_feed(), kb_world())
     elif what == "front":
@@ -665,8 +695,14 @@ async def fa_words(m: Message):
                               reply_markup=kb_mil())
     if w == "صلح":
         return await m.answer(war.peace_request(uid), parse_mode="HTML", reply_markup=kb_pol())
-    if w == "راهنما":
-        return await m.answer(texts.HELP, parse_mode="HTML", reply_markup=kb_main())
+    if w in ("راهنما", "کمک"):
+        if arg:
+            cid2 = _find_country(arg)
+            if cid2:
+                return await m.answer(guide.guide(cid2), parse_mode="HTML",
+                                      reply_markup=kb_world())
+        return await m.answer(texts.HELP_PAGES[0], parse_mode="HTML",
+                              reply_markup=kb_help(1))
 
 
 def _find_item(txt: str):

@@ -133,6 +133,9 @@ def respond_to_strike(attacker: str, defender: str, kind: str, hit: int) -> list
                (attacker, defender, defender, attacker))
     if not w:
         return out
+    npc = not db.one("SELECT 1 FROM users WHERE country=? LIMIT 1", (defender,))
+    if npc:
+        out.append(f"🤖 {dc['name']} بازیکن ندارد اما دولت NPC‌اش می‌جنگد:")
     # ضدحمله‌ی سازمان‌یافته: دشمن جبهه را پس می‌گیرد
     if hit and random.random() < 0.75:
         col = "score_a" if w["a"] == defender else "score_b"

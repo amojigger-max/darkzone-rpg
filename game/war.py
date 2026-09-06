@@ -432,13 +432,21 @@ def settle():
 
 
 def world_status() -> str:
-    rows = db.q("SELECT country, COUNT(*) n FROM users GROUP BY country ORDER BY n DESC")
+    counts = {r["country"]: r["n"] for r in
+              db.q("SELECT country, COUNT(*) n FROM users "
+                   "WHERE country IS NOT NULL GROUP BY country")}
     t = texts
-    lines = [t.hdr("وضعیت جهان", "🌍"), "👥 <b>سربازان:</b>", ""]
-    for r in rows:
-        c = countries.COUNTRIES.get(r["country"])
-        if c:
-            lines.append(f"{c['flag']} {c['name']} — {r['n']}")
+    lines = [t.hdr("وضعیت جهان", "🌍"),
+             "🤖 = دولت NPC — بازیکن ندارد، خودش می‌جنگد و جواب می‌دهد", ""]
+    cids = list(countries.COUNTRIES)
+    def _cell(cid):
+        c = countries.COUNTRIES[cid]
+        n = counts.get(cid, 0)
+        return f"{c['flag']} {c['name']}: {n if n else '🤖'}"
+    for a, b in zip(cids[::2], cids[1::2]):
+        lines.append(_cell(a) + " · " + _cell(b))
+    if len(cids) % 2:
+        lines.append(_cell(cids[-1]))
     wars = db.q("SELECT * FROM wars WHERE status='active'")
     lines += ["", "⚔️ <b>جنگ‌های فعال:</b>"]
     if not wars:
