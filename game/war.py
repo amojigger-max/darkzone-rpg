@@ -558,7 +558,7 @@ def colonies() -> str:
     return "\n".join(lines)
 
 
-def power_rank() -> str:
+def power_rank(top: int = 10) -> str:
     """🥇 رتبه‌بندی نظامی کشورها — سرباز، تجهیزات، سپر، اشغال، پیروزی."""
     t = texts
     rows = []
@@ -577,7 +577,7 @@ def power_rank() -> str:
         rows.append((power, cid, n))
     rows.sort(reverse=True)
     lines = [t.hdr("قدرت نظامی کشورها", "🥇"), ""]
-    for i, (pw, cid, n) in enumerate(rows[:10], 1):
+    for i, (pw, cid, n) in enumerate(rows[:top], 1):
         c = countries.COUNTRIES[cid]
         medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{t.fa(i)}.")
         npc = "" if n else " 🤖"

@@ -4,8 +4,76 @@ import random
 import db
 import texts
 
-MIN_GAP = 300
+MIN_GAP = 900
 MAX_TRIES = 3
+
+# 💡 نکته‌ها — هر بار یکی، آرام و پیوسته
+TIPS = [
+    ("جهان", "وضعیت همه‌ی کشورها و جنگ‌های فعال را ببین"),
+    ("نقشه", "شهرهای اشغال‌شده و مرزهای جبهه‌ها"),
+    ("قدرت", "رتبه‌بندی نظامی ۲۱ کشور"),
+    ("مستعمره‌ها", "چه کشوری مستعمره‌ی کیست"),
+    ("جیره", "دستمزد روزانه‌ات را بگیر"),
+    ("رزم", "نبرد کن، غنیمت بگیر، ارتقا بگیر"),
+    ("تجهیزات", "زرادخانه‌ی کشورت را ببین"),
+    ("پدافند", "سپر ملی ۶ لایه‌ی کشورت"),
+    ("اخبار", "آخرین رویدادهای کشورت"),
+    ("کمک", "راهنمای کامل بازی"),
+]
+
+
+def bulletin() -> str:
+    """📰 پیام خودکار هر ۱۰ دقیقه — کوتاه، تمیز، چرخشی."""
+    import countries
+    import texts
+    from game import economy, geo, war as _war
+    t = texts
+    idx = int(db.kv_get("bl_idx", "0"))
+    db.kv_set("bl_idx", str(idx + 1))
+    kind = idx % 5
+    # ⚔️ جنگ‌ها
+    if kind == 0:
+        wars = db.q("SELECT * FROM wars WHERE status='active'")
+        lines = [t.hdr("اخبار جنگی", "⚔️"), ""]
+        if not wars:
+            lines.append("🕊 صلح بر جهان حاکم است... فعلاً.")
+        for w in wars[:4]:
+            a, b = countries.COUNTRIES.get(w["a"]), countries.COUNTRIES.get(w["b"])
+            if a and b:
+                lines.append(f"{a['flag']} {a['name']} ↔ {b['flag']} {b['name']}")
+        lines += ["", t.DASH]
+        return "\n".join(lines)
+    # 💱 بازار
+    if kind == 1:
+        w = economy.world()
+        d, o, i = w["dollar"], w["oil"], w["inflation"] * 100
+        lines = [t.hdr("بازار جهانی", "💱"), "",
+                 t.row("شاخص دلار", f"×{t.fa(f'{d:.2f}')}"),
+                 t.row("نفت", f"${t.fa(f'{o:.0f}')}"),
+                 t.row("تورم", f"{t.fa(f'{i:.1f}')}٪"),
+                 t.row("۱۰۰ سکه", texts.money("ir", 100)),
+                 "", t.DASH]
+        return "\n".join(lines)
+    # 🥇 قدرت‌ها
+    if kind == 2:
+        return _war.power_rank(top=3) + "\n" + t.DASH
+    # ⛓ مستعمره‌ها
+    if kind == 3:
+        cols = []
+        for cid in countries.COUNTRIES:
+            oc = geo.colony_of(cid)
+            if oc:
+                cols.append(f"{countries.COUNTRIES[cid]['flag']} "
+                            f"{countries.COUNTRIES[cid]['name']} ⛓ "
+                            f"{countries.COUNTRIES[oc]['flag']}")
+        lines = [t.hdr("مستعمره‌های جهان", "⛓"), ""]
+        lines += cols[:6] if cols else ["🕊 هیچ کشوری مستعمره نیست — همه آزادند."]
+        lines += ["", t.DASH]
+        return "\n".join(lines)
+    # 💡 نکته
+    cmd, desc = TIPS[idx % len(TIPS)]
+    return "\n".join([t.hdr("نکته", "💡"), "",
+                      f"«{cmd}» — {desc}", "", t.DASH])
 
 
 def active_chats(minutes=45):

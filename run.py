@@ -24,7 +24,7 @@ NEWS_TMPL = [
 
 def _news(w) -> str | None:
     import random
-    if random.random() > 0.18:          # هر تیک ۶۰ ثانیه → ~۱۰ دقیقه یک خبر
+    if random.random() > 0.08:          # هر تیک ۶۰ ثانیه → ~۲۰ دقیقه یک خبر
         return None
     tpl, key = random.choice(NEWS_TMPL)
     import texts
@@ -88,11 +88,22 @@ async def world_loop(bot: Bot):
 
 
 async def events_loop(bot: Bot):
-    """⚡ رویداد زنده‌ی هر گروه."""
+    """⚡ رویداد آرام گروه + خبرنامه‌ی خودکار هر ۱۰ دقیقه."""
     await asyncio.sleep(35)
     print("⚡ events_loop alive", flush=True)
     while True:
         try:
+            now = db.now()
+            if now - int(db.kv_get("bl_last", "0")) >= 600:   # هر ۱۰ دقیقه
+                db.kv_set("bl_last", str(now))
+                bl = events.bulletin()
+                targets = set(events.active_chats())
+                gid = db.kv_get("main_group")
+                if gid:
+                    targets.add(int(gid))
+                for cid in targets:
+                    with contextlib.suppress(Exception):
+                        await bot.send_message(cid, bl, parse_mode="HTML")
             for cid in events.active_chats():
                 ev = events.maybe_event(cid)
                 if ev:
