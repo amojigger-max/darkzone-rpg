@@ -465,6 +465,9 @@ async def main():
     n_inv = db.one("SELECT COUNT(*) c FROM inventory")["c"]
     T("ریست: انبار خالی", n_inv == 0, n_inv)
     T("ریست: پرچم یک‌بار", db.kv_get("reset_v35") == "1")
+    migrations._starter_kits()
+    k = db.one("SELECT COUNT(*) c FROM inventory WHERE iid LIKE 'drone_%'")["c"]
+    T("کیت برای همه‌ی فعلی‌ها", k >= 2, k)
     # 🧪 ادامه‌ی تست: پاک‌شدنی‌ها برگردند برای بخش‌های بعدی
     db.ex("UPDATE users SET money=999999, is_leader=1 WHERE uid=?",
           (reg["kp"],))
@@ -540,12 +543,12 @@ async def main():
     T("NPC به رهبر‌دار جنگ نمی‌دهد", not got_war, "hz جنگ گرفت!")
     # ═══ ۱۴. دور ششم: تجهیزات انبوه + عکس + جنگ منطقی ═══
     import os as _os
-    T("۴۰۰ تجهیز (با نخبه‌ها)", len(countries.ITEMS) == 400, len(countries.ITEMS))
+    T("~۴۷۰ تجهیز", len(countries.ITEMS) == 469, len(countries.ITEMS))
     badp = [i for i, it in countries.ITEMS.items()
             if it[6] != "elite.jpg" and it[5] % 100]
     T("قیمت‌های معمولی رند", not badp, badp[:3])
     bad6 = [cid for cid, cc in countries.COUNTRIES.items()
-            if len(cc["items"]) not in (6, 7, 8)]
+            if len(cc["items"]) not in (9, 10, 11)]
     T("۶-۸ تجهیز در هر کشور", not bad6, bad6)
     elite = [i for i, it in countries.ITEMS.items() if it[6] == "elite.jpg"]
     T("۱۰۰ تجهیز نخبه", len(elite) == 100, len(elite))
@@ -556,6 +559,17 @@ async def main():
     T("قیمت نخبه ۵هزار تا ۱۰۰هزار رند", price_ok)
     T("پول دلار یکسان", texts.money("ir", 1500) == texts.money("us", 1500)
       and "دلار" in texts.money("ir", 1500), texts.money("ir", 1500))
+    # 🛩 کیت شروع: پهپاد شناسایی رایگان
+    st.ensure(890, "تازه‌وارد"); st.enlist(890, "tr", "تازه")
+    d = db.one("SELECT qty FROM inventory WHERE uid=890 AND iid='drone_tr'")
+    T("کیت شروع پهپاد", d and d["qty"] == 1, d)
+    # 🔥 چرخش ۲۴ساعته + تخفیف دقیق
+    d1 = economy.daily_deals("us"); d2 = economy.daily_deals("us")
+    T("پیشنهاد روز قطعی", d1 == d2 and 1 <= len(d1) <= 2, d1)
+    dp = economy.deal_price(1000)
+    T("تخفیف ۲۰٪ رند", dp == 800, dp)
+    T("پهپاد همه‌کشور", all(f"drone_{c}" in countries.ITEMS
+                            for c in countries.COUNTRIES))
     noimg = [iid for iid, it in countries.ITEMS.items()
              if not ((it[6] and _os.path.exists(f"assets/img/{it[6]}"))
                      or _os.path.exists(countries.category_img(it[0])))]

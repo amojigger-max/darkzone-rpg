@@ -23,10 +23,22 @@ def _reset_world():
         db.kv_set("reset_v35", "1")
 
 
+def _starter_kits():
+    """🎁 سلاح شروع برای همه‌ی بازیکنان فعلی — فقط یک بار."""
+    with contextlib.suppress(Exception):
+        for r in db.q("SELECT uid, country FROM users WHERE country IS NOT NULL"):
+            db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100) "
+                  "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+1",
+                  (r["uid"], f"drone_{r['country']}"))
+
+
 def run_all():
     """در بوت روی همه‌ی دنیاها — فقط یک بار برای هر دنیا."""
     for g in db.list_games():
         db.GAME.set(g)
         if not db.kv_get("reset_v35"):
             _reset_world()
+        if not db.kv_get("kit_v35"):
+            _starter_kits()
+            db.kv_set("kit_v35", "1")
     db.GAME.set(None)

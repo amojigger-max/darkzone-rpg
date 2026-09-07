@@ -180,6 +180,28 @@ def market() -> str:
 
 
 # ═══════════ 💼 تجارت: صادرات و واردات ═══════════
+def day_index() -> int:
+    """شماره‌ی امروز — هر ۲۴ ساعت پیشنهادها می‌چرخند."""
+    return db.now() // 86400
+
+
+def daily_deals(cid: str) -> list:
+    """🔥 پیشنهاد ویژه‌ی امروز — ۲ سلاح با ۲۰٪ تخفیف؛ هر روز تازه، قطعی و بدون تصادف."""
+    import hashlib
+    import countries
+    items = [i for i in countries.COUNTRIES[cid]["items"] if not i.endswith("_e")]
+    if not items:
+        return []
+    h = int(hashlib.sha256(f"{cid}:{day_index()}".encode()).hexdigest(), 16)
+    picks = [items[h % len(items)], items[(h // 7) % len(items)]]
+    return list(dict.fromkeys(picks))[:2]
+
+
+def deal_price(base: int) -> int:
+    """قیمتِ تخفیف‌دار — رند و قابل محسابه (۲۰٪ کمتر، رند به ۱۰)."""
+    return base * 80 // 100 // 10 * 10
+
+
 GOODS = [
     ("oil", "نفت خام", "🛢", 82),       # قیمت پایه‌ی جهانی (واحد پایه)
     ("gold", "طلا", "🥇", 2400),

@@ -45,10 +45,19 @@ def enlist(uid, country: str, name: str) -> bool:
               "money=CASE WHEN money>0 THEN money ELSE 1000 END, "
               "name=CASE WHEN name='' OR name IS NULL THEN ? ELSE name END "
               "WHERE uid=?", (country, texts.esc(name)[:32], uid))
+        _starter_kit(uid, country)
         return True
     db.ex("INSERT INTO users(uid,name,country,money,joined,last_active) VALUES(?,?,?,?,?,?)",
           (uid, texts.esc(name)[:32], country, 1000, db.now(), db.now()))
+    _starter_kit(uid, country)
     return True
+
+
+def _starter_kit(uid: int, country: str):
+    """🎁 سلاحِ شروع — پهپاد شناسایی رایگان؛ حمله از دقیقه‌ی اول."""
+    db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100) "
+          "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+1",
+          (uid, f"drone_{country}",))
 
 
 def xp_need(level: int) -> int:

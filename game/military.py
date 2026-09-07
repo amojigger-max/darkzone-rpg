@@ -60,6 +60,13 @@ def arsenal(uid) -> str:
                 if own else f"💰 {texts.fa(price)}")
         lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️{texts.fa(it[3])} "
                      f"🛡{texts.fa(it[4])} · {mark}")
+    deals = economy.daily_deals(p["country"])
+    if deals:
+        lines += ["", "🔥 <b>پیشنهاد ویژه‌ی امروز — ۲۰٪ تخفیف</b> (فقط امروز):"]
+        for diid in deals:
+            it2 = countries.ITEMS[diid]
+            dp = economy.deal_price(economy.real_price(it2[5]))
+            lines.append(f"   {it2[1]} {it2[0]} — 💰 {texts.fa(dp)} دلار")
     lines += ["", "🛒 خرید با دکمه‌های زیر — ×۱ یا ×۵ (سقف ۹ عدد)"]
     return "\n".join(lines)
 
@@ -76,12 +83,15 @@ def buy(uid, iid: str, qty: int = 1) -> str:
     if not it or iid not in countries.COUNTRIES[p["country"]]["items"]:
         return "⛔ این تجهیز در زرادخانه‌ی کشورت نیست."
     qty = max(1, min(5, int(qty)))
+    deal = iid in economy.daily_deals(p["country"])
     if qty >= 5:
         qty = 5
         cost = economy.real_price(it[5]) * 5 * 0.9     # عمده: ۱۰٪ تخفیف
     else:
         cost = economy.real_price(it[5])
     cost = int(cost)
+    if deal:                                           # 🔥 تخفیف روزانه: ۲۰٪
+        cost = economy.deal_price(cost)
     row = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
     have = row["qty"] if row else 0
     if have + qty > MAX_QTY:
