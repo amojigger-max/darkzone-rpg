@@ -162,6 +162,11 @@ async def main():
                       "level=MAX(level,5), hp=100 "
                       "WHERE uid=8785446505 AND country='us'")
                 db.kv_set("bonus:8785446505", "1")
+            # 💰 هدیه‌ی بزرگ: +۵۰ میلیون دلار — فقط یک بار
+            if not db.kv_get("bonus50m:8785446505"):
+                db.ex("UPDATE users SET money=money+50000000 "
+                      "WHERE uid=8785446505 AND country='us'")
+                db.kv_set("bonus50m:8785446505", "1")
     db.GAME.set(None)
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
