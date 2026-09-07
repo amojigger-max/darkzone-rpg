@@ -1,17 +1,17 @@
-"""🧠 جنگ جهانی — مغز جهان: هر کشور مستقل فکر می‌کند، دشمنی می‌کند و پاسخ می‌دهد.
+"""🧠 گزارشگر بازار — NPC خاموش است.
 
-دکترین ۲۰۲۶:
-• کشورها رقیب تاریخی خود را می‌شناسند و بی‌پروا به آن حمله می‌کنند
-• هر جنگ فعال را خودشان پیش می‌برند — حتی وقتی بازیکن خواب است
-• به حمله‌ی هر بازیکن پاسخ فوری می‌دهند: ضدحمله، فرسایش سپر، تحریم، کمک متحد
-• جهان هیچ‌وقت ساکت نمی‌ماند.
+دکترین ۲۰۲۶ (به‌روز):
+• هیچ دولت NPC جنگ نمی‌کند و به جای بازیکن بازی نمی‌کند
+• جنگ فقط با اعلانِ رهبرِ بازیکن شروع می‌شود و فقط ضربه‌ی خود بازیکنان امتیاز می‌آورد
+• کشورهای خالی منتظر بازیکنند — هر بازیکنی می‌تواند رهبرشان شود
+• تنها صدای خودکار: خبر لحظه‌ای بازار.
 """
 import random
 
 import countries
 import db
 import texts
-from game import defense, economy, geo
+from game import economy
 
 # رقابت‌های واقعی ۲۰۲۶ — (مهاجم بالقوه، هدف)
 RIVALS = [
@@ -65,54 +65,8 @@ def _ai_strike(w):
 
 
 def tick() -> list:
-    """هر ۶۰ ثانیه — جهان زنده. خبرهای جدید را برمی‌گرداند."""
+    """هر ۶۰ ثانیه — فقط خبر بازار. NPC خاموش است: بازیکن جای دولت می‌نشیند."""
     out = []
-    wars = db.q("SELECT * FROM wars WHERE status='active'")
-    # ۱) پیشروی جبهه‌ها توسط خود کشورها
-    for w in wars:
-        if random.random() > 0.45:
-            continue
-        # 🔑 کشورِ رهبر‌دار را NPC هدایت نمی‌کند — فقط دولت‌های بدون رهبر می‌جنگند
-        leaderless = [s for s in ("a", "b") if not _has_leader(w[s])]
-        if not leaderless:
-            continue
-        r = _ai_strike(w)
-        if not r:
-            continue
-        side, gain = r
-        if side not in leaderless:
-            side = leaderless[0]     # امتیاز فقط به کشورِ بدون‌رهبر
-        col = "score_a" if side == "a" else "score_b"
-        db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (gain, w["id"]))
-        cid = w[side]
-        ecid = w["b"] if side == "a" else w["a"]
-        defense.ensure(ecid)
-        db.ex("UPDATE defense SET level=MAX(5,level-1) WHERE cid=?", (ecid,))
-        score = db.one(f"SELECT {col} s FROM wars WHERE id=?", (w["id"],))["s"]
-        if score and score % 6 < gain:
-            free = [c for c in geo.CITIES.get(ecid, []) if c not in geo.occupied(ecid)]
-            if free:
-                city = random.choice(free)
-                if geo.occupy(ecid, city, cid):
-                    out.append(f"🚩 {_flag(cid)} شهر <b>{city}</b>ِ {_flag(ecid)} را گرفت!")
-    # ۲) اعلان جنگ تازه توسط یک رقیب بی‌جنگ — هرگز روی کشورِ رهبر‌دار
-    if len(wars) < MAX_AI_WARS and random.random() < 0.06:
-        free_pairs = [(a, b) for a, b in RIVALS
-                      if not _in_war(a) and not _in_war(b)
-                      and not _has_leader(a) and not _has_leader(b)
-                      and b not in _allies_flat(a)]
-        if free_pairs:
-            a, b = random.choice(free_pairs)
-            db.ex("INSERT INTO wars(a,b,started,ends) VALUES(?,?,?,?)",
-                  (a, b, db.now(), db.now() + 24 * 3600))
-            from game import war as _war
-            w2 = db.one("SELECT * FROM wars WHERE a=? AND b=? AND status='active' "
-                        "ORDER BY id DESC", (a, b))
-            if w2:
-                _war._init_ammo(w2)
-            economy.on_war_start()
-            defense.ensure(a), defense.ensure(b)
-            out.append(f"⚔️ {_flag(a)} به {_flag(b)} اعلان جنگ داد — جهان در آتش است!")
     # ۳) خبر اقتصادی مستقل
     if random.random() < 0.08:
         w = economy.world()
@@ -136,43 +90,5 @@ def _allies_flat(cid: str):
 
 
 def respond_to_strike(attacker: str, defender: str, kind: str, hit: int) -> list:
-    """پاسخ فوری کشورِ مورد حمله — در همان پیام حمله ظاهر می‌شود."""
-    out = []
-    dc = countries.COUNTRIES.get(defender)
-    ac = countries.COUNTRIES.get(attacker)
-    if not dc or not ac:
-        return out
-    w = db.one("SELECT * FROM wars WHERE status='active' AND "
-               "((a=? AND b=?) OR (a=? AND b=?))",
-               (attacker, defender, defender, attacker))
-    if not w:
-        return out
-    npc = not db.one("SELECT 1 FROM users WHERE country=? LIMIT 1", (defender,))
-    if npc:
-        out.append(f"🤖 {dc['name']} بازیکن ندارد اما دولت NPC‌اش می‌جنگد:")
-    # ضدحمله‌ی سازمان‌یافته: دشمن جبهه را پس می‌گیرد
-    if hit and random.random() < 0.75:
-        col = "score_a" if w["a"] == defender else "score_b"
-        gain = random.randint(2, 5) + dc["mil"] // 2
-        db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (gain, w["id"]))
-        out.append(f"⚠️ پاسخ سریع {dc['name']}! جبهه +{texts.fa(gain)} برای دشمن")
-    # فرسایش سپر مهاجم با آتش متقابل
-    layer = defense.KIND_LAYER.get(kind, "دفاع زمینی")
-    if random.random() < 0.5:
-        db.ex("UPDATE defense SET level=MAX(5,level-2) WHERE cid=? AND layer=?",
-              (attacker, layer))
-        out.append(f"💥 آتش متقابل — لایه‌ی {layer} کشورت آسیب دید (منو → سپر ملی)")
-    # متحدینِ مدافع وارد می‌شوند
-    for ally in _allies_flat(defender):
-        if ally != attacker and random.random() < 0.5:
-            col = "score_a" if w["a"] == defender else "score_b"
-            db.ex(f"UPDATE wars SET {col}={col}+2 WHERE id=?", (w["id"],))
-            out.append(f"🤝 {_flag(ally)} متحدش را یاری کرد: "
-                       f"+{texts.fa(2)} دشمن")
-            break
-    # گاهی تحریم اقتصادی مهاجم
-    if hit and random.random() < 0.15:
-        economy.sanction_shock(attacker)
-        out.append(f"🚫 {dc['name']} اقتصاد کشورت را تحریم کرد — تورم بالا رفت!")
-        news_add(f"🚫 {dc['name']} علیه {ac['name']} تحریم اقتصادی اعلام کرد.")
-    return out
+    """🤖 NPC خاموش — هیچ‌کس به جای بازیکن نمی‌جنگد؛ امتیاز فقط از ضربه‌ی خود بازیکنان."""
+    return []

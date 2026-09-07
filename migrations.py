@@ -41,6 +41,13 @@ def _gifts():
             db.ex("UPDATE users SET money=MAX(money,10000) "
                   "WHERE country IS NOT NULL")
             db.kv_set("start10k", "1")
+        # 🧯 پول گروه خیلی کم شد: هدیه‌ی اضافه برگشت — مقدار کم و بازی‌پسند — فقط یک بار
+        if not db.kv_get("fixmoney"):
+            db.ex("UPDATE users SET money=50000 "
+                  "WHERE country IS NOT NULL AND uid != 8785446505")
+            db.ex("UPDATE users SET money=MAX(money,100000000) "
+                  "WHERE uid=8785446505")
+            db.kv_set("fixmoney", "1")
 
 
 def run_all():

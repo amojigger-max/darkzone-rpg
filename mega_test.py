@@ -460,7 +460,7 @@ async def main():
     n_fleet = db.one("SELECT COUNT(*) c FROM inventory WHERE uid=8785446505 "
                      "AND iid IN ('carrier','f22','f35','burke','abrams')")
     T("۵ تجهیزات آمریکایی", n_fleet["c"] == 5, n_fleet["c"])
-    T("۱میلیون + شروع تا ۱۰هزار", st.get(889)["money"] == 1000300,
+    T("پول گروه کم و مناسب", st.get(889)["money"] == 50000,
       st.get(889)["money"])
     db.ex("UPDATE users SET money=55 WHERE uid=889")
     migrations._gifts()
@@ -537,9 +537,14 @@ async def main():
     T("NPC به رهبر‌دار جنگ نمی‌دهد", not got_war, "hz جنگ گرفت!")
     # ═══ ۱۴. دور ششم: تجهیزات انبوه + عکس + جنگ منطقی ═══
     import os as _os
-    T("۳۰۰ تجهیز", len(countries.ITEMS) == 300, len(countries.ITEMS))
-    bad6 = [cid for cid, cc in countries.COUNTRIES.items() if len(cc["items"]) != 6]
-    T("۶ تجهیز در هر کشور", not bad6, bad6)
+    T("۴۰۰ تجهیز (با نخبه‌ها)", len(countries.ITEMS) == 400, len(countries.ITEMS))
+    bad6 = [cid for cid, cc in countries.COUNTRIES.items()
+            if len(cc["items"]) not in (6, 7, 8)]
+    T("۶-۸ تجهیز در هر کشور", not bad6, bad6)
+    elite = [i for i, it in countries.ITEMS.items() if it[6] == "elite.jpg"]
+    T("۱۰۰ تجهیز نخبه", len(elite) == 100, len(elite))
+    strong = all(countries.ITEMS[e][3] >= 10 for e in elite)
+    T("نخبه‌ها قوی", strong)
     noimg = [iid for iid, it in countries.ITEMS.items()
              if not ((it[6] and _os.path.exists(f"assets/img/{it[6]}"))
                      or _os.path.exists(countries.category_img(it[0])))]

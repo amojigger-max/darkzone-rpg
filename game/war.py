@@ -48,6 +48,13 @@ def alliance_request(leader_uid: int, target: str) -> str:
             f"رهبر {tc['name']} دکمه‌ی «🤝 قبول اتحاد» را بزند.")
 
 
+def side_tags(*cids: str) -> str:
+    """📣 تگ همه‌ی بازیکنان طرف‌های یک رویداد — هیچ‌کس جا نماند."""
+    rows = db.q("SELECT uid, name FROM users WHERE country IN "
+                f"({','.join('?' * len(cids))}) ORDER BY country", cids)
+    return " ".join(texts.mention(r["uid"], r["name"] or "سرباز") for r in rows)
+
+
 def alliance_accept(leader_uid: int, cid: str) -> str:
     p = state.active(leader_uid)
     if not p:
@@ -61,7 +68,8 @@ def alliance_accept(leader_uid: int, cid: str) -> str:
     db.ex("INSERT INTO alliances(a,b) VALUES(?,?)", (cid, p["country"]))
     a, b = countries.COUNTRIES[cid], countries.COUNTRIES[p["country"]]
     return (f"🤝 <b>اتحاد رسمی!</b>\n{a['flag']} {a['name']} ⇄ {b['flag']} {b['name']}\n"
-            f"اگر یکی در جنگ شود، دیگری وارد می‌شود.")
+            f"اگر یکی در جنگ شود، دیگری وارد می‌شود."
+            + (f"\n\n📣 {side_tags(cid, p['country'])}" if True else ""))
 
 
 def allies_of(cid: str):
@@ -101,7 +109,8 @@ def peace_request(uid) -> str:
     other = _enemy(p["country"], wr)
     oc = countries.COUNTRIES[other]
     return (f"🕊 درخواست صلح به {oc['flag']} {oc['name']} ارسال شد.\n"
-            f"رهبر آن کشور دکمه‌ی «🕊 قبول صلح» را بزند.")
+            f"رهبر آن کشور دکمه‌ی «🕊 قبول صلح» را بزند."
+            + (f"\n\n📣 {side_tags(other)}"))
 
 
 def peace_accept(uid) -> str:
@@ -117,7 +126,8 @@ def peace_accept(uid) -> str:
     db.kv_set(f"peace:{wr['id']}", "")
     a, b = countries.COUNTRIES[wr["a"]], countries.COUNTRIES[wr["b"]]
     return (f"🕊 <b>پیمان صلح!</b>\n{a['flag']} {a['name']} ⇄ {b['flag']} {b['name']}\n"
-            f"جنگ پایان یافت — بازار نفس کشید.")
+            f"جنگ پایان یافت — بازار نفس کشید."
+            + (f"\n\n📣 {side_tags(wr['a'], wr['b'])}"))
 
 
 def surrender(uid) -> str:
@@ -146,6 +156,7 @@ def surrender(uid) -> str:
     t = texts
     lines = [t.hdr("تسلیم", "🏳"),
              f"{mc['flag']} {mc['name']} در برابر {ec['flag']} {ec['name']} تسلیم شد",
+             f"📣 {side_tags(cid, enemy)}",
              t.K,
              f"💰 غرامت هر سرباز: {t.money(cid, -reps)}",
              f"🏆 برندگان: +{t.money(enemy, reps)} هر سرباز",
@@ -255,8 +266,10 @@ def declare(leader_uid: int, target: str) -> str:
     economy.on_war_start()          # شوک بازار
     fronts = geo.fronts_of(p["country"], target)
     t = texts
+    tags = side_tags(p["country"], target)
     return "\n".join([
         t.hdr("اعلام جنگ", "⚔️"),
+        (f"📣 {tags}" if tags else ""),
         f"{mc['flag']} <b>{mc['name']}</b> ← حمله ← {tc['flag']} <b>{tc['name']}</b>",
         t.K,
         "🗺 <b>جبهه‌ها:</b> " + " · ".join(fronts),
@@ -471,16 +484,16 @@ def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
             lines.append(f"▫️ {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")
         else:
             lines.append(f"▫️ {texts.fa(n)}. 💥 برخورد! آسیب {texts.fa(dmg)}")
-            score_add += 3
+            score_add += 4
         db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
               (random.randint(6, 14), uid, best["iid"]))
     if score_add:
         col = "score_a" if w["a"] == p["country"] else "score_b"
         db.ex(f"UPDATE wars SET {col}={col}+? WHERE id=?", (score_add, w["id"]))
         lines.append(f"⚔️ امتیاز جبهه: +{texts.fa(score_add)}")
-        # هر ۵ امتیاز یک شهر می‌افتد
+        # هر ۴ امتیاز یک شهر می‌افتد — جبهه‌ی قوی‌تر
         score = db.one(f"SELECT {col} s FROM wars WHERE id=?", (w["id"],))["s"]
-        if score and score % 5 < count:
+        if score and score % 4 < count:
             city = random.choice([c for c in geo.CITIES.get(ecid, [])
                                   if c not in geo.occupied(ecid)] or ["مرز"])
             msg = geo.occupy(ecid, city, p["country"])

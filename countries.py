@@ -601,6 +601,21 @@ RANKS = [(1, "سرباز تازه‌کار"), (2, "سرباز"), (3, "گروهب
          (9, "سپهبد"), (10, "سرلشکر"), (12, "ارتشبد"), (15, "فرمانده کل")]
 
 
+# ⚔️ نسخه‌های نخبه — هر کشور ۲ تجهیز خفن مخصوص خودش (با یک عکس جامع)
+def _build_elite():
+    for _cid in COUNTRIES:
+        own = [(iid, v) for iid, v in ITEMS.items() if v[2] == _cid]
+        own.sort(key=lambda kv: -(kv[1][3] + kv[1][4]))
+        for iid, (nm, em, ctry, atk, guard, price, img) in own[:2]:
+            ITEMS[f"{iid}_e"] = (f"نسخه‌ی نخبه‌ی {nm}", em, _cid,
+                                 int(atk * 1.3) + 2, int(guard * 1.3) + 2,
+                                 int(price * 2.2), "elite.jpg")
+            COUNTRIES[_cid]["items"].append(f"{iid}_e")
+
+
+_build_elite()
+
+
 def init_items():
     for iid, (nm, em, ctry, atk, guard, price, img) in ITEMS.items():
         db.ex("INSERT OR IGNORE INTO items(iid,name,emoji,country,atk,guard,price,max_dur,img) "
