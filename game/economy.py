@@ -33,7 +33,8 @@ def price_factor() -> float:
 
 
 def real_price(base: int) -> int:
-    return int(base * price_factor())
+    """قیمت ثابت و رند — بدون تورم و نرخ ارز؛ دقیقاً همان عدد منو."""
+    return base
 
 
 def tick():
@@ -207,7 +208,8 @@ def good_price(gid: str) -> float:
     """قیمت لحظه‌ای کالا — نفت از قیمت جهانی زنده می‌آید."""
     w = world()
     base = w["oil"] if gid == "oil" else GOODS_MAP[gid][3]
-    return base * _mk(gid)["m"] * w["dollar"] * (1 + w["inflation"] * 0.3)
+    # بازار فقط با ضریب کالا حرکت می‌کند — رند و قابل محسابه
+    return round(base * _mk(gid)["m"]) // 10 * 10
 
 
 def holdings(uid: int) -> dict:

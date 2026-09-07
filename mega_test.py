@@ -445,27 +445,30 @@ async def main():
     price5 = int(economy.real_price(_co.ITEMS['kornet'][5]) * 5 * 0.9)
     p1 = int(economy.real_price(_co.ITEMS['kornet'][5]))
     T("هزینه ×۵ درست", m0["money"] == 99999 - p1 - price5, m0["money"])
-    # پول شروع ۱۰۰۰۰
+    # پول شروع ۱۰۰۰
     st.ensure(888, "نو"); st.enlist(888, "ir", "نو")
-    T("پول شروع ۱۰۰۰۰", st.get(888)["money"] == 10000, st.get(888)["money"])
-    # 🎁 مهاجرت‌های یک‌باره: هدیه‌ی سلطنتی + پول شروع همه
-    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money,is_leader) "
-          "VALUES(8785446505,'USG','us',500,1)")
-    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money) "
-          "VALUES(889,'پ2','fr',300)")
+    T("پول شروع ۱۰۰۰", st.get(888)["money"] == 1000, st.get(888)["money"])
+    # 🔄 ریست بزرگ: فقط کشور می‌ماند
+    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money,is_leader,level,kills) "
+          "VALUES(8785446505,'USG','us',99000000,1,9,9)")
+    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money,level) "
+          "VALUES(889,'پ2','fr',300,7)")
+    db.ex("INSERT OR IGNORE INTO users(uid,name,money) VALUES(887,'بی‌کشور',999)")
+    db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(889,'kornet',5,50)")
     import migrations
-    migrations._gifts()
+    migrations._reset_world()
     us = st.get(8785446505)
-    T("هدیه ۱۰۰میلیون", us["money"] == 100000000, us["money"])
-    n_fleet = db.one("SELECT COUNT(*) c FROM inventory WHERE uid=8785446505 "
-                     "AND iid IN ('carrier','f22','f35','burke','abrams')")
-    T("۵ تجهیزات آمریکایی", n_fleet["c"] == 5, n_fleet["c"])
-    T("پول گروه کم و مناسب", st.get(889)["money"] == 50000,
-      st.get(889)["money"])
-    db.ex("UPDATE users SET money=55 WHERE uid=889")
-    migrations._gifts()
-    T("مهاجرت فقط یک بار", st.get(889)["money"] == 55 and
-      st.get(8785446505)["money"] == 100000000)
+    T("ریست: پول ۱۰۰۰", us["money"] == 1000, us["money"])
+    T("ریست: کشور ماند", us["country"] == "us", us["country"])
+    T("ریست: سطح و کیل صفر", us["level"] == 1 and us["kills"] == 0)
+    T("ریست: بی‌کشور حذف", st.get(887) is None)
+    n_inv = db.one("SELECT COUNT(*) c FROM inventory")["c"]
+    T("ریست: انبار خالی", n_inv == 0, n_inv)
+    T("ریست: پرچم یک‌بار", db.kv_get("reset_v35") == "1")
+    # 🧪 ادامه‌ی تست: پاک‌شدنی‌ها برگردند برای بخش‌های بعدی
+    db.ex("UPDATE users SET money=999999, is_leader=1 WHERE uid=?",
+          (reg["kp"],))
+    await cb(reg["kp"], "wp:hwasong18")   # موشک برای بخش جنگ
     # 💸 انتقال دقیق و بی‌کارمزد
     db.ex("UPDATE users SET money=20000 WHERE uid=888")
     db.ex("UPDATE users SET money=1000 WHERE uid=889")
@@ -538,6 +541,9 @@ async def main():
     # ═══ ۱۴. دور ششم: تجهیزات انبوه + عکس + جنگ منطقی ═══
     import os as _os
     T("۴۰۰ تجهیز (با نخبه‌ها)", len(countries.ITEMS) == 400, len(countries.ITEMS))
+    badp = [i for i, it in countries.ITEMS.items()
+            if it[6] != "elite.jpg" and it[5] % 100]
+    T("قیمت‌های معمولی رند", not badp, badp[:3])
     bad6 = [cid for cid, cc in countries.COUNTRIES.items()
             if len(cc["items"]) not in (6, 7, 8)]
     T("۶-۸ تجهیز در هر کشور", not bad6, bad6)
@@ -545,6 +551,11 @@ async def main():
     T("۱۰۰ تجهیز نخبه", len(elite) == 100, len(elite))
     strong = all(countries.ITEMS[e][3] >= 10 for e in elite)
     T("نخبه‌ها قوی", strong)
+    price_ok = all(5000 <= countries.ITEMS[e][5] <= 100000
+                   and countries.ITEMS[e][5] % 1000 == 0 for e in elite)
+    T("قیمت نخبه ۵هزار تا ۱۰۰هزار رند", price_ok)
+    T("پول دلار یکسان", texts.money("ir", 1500) == texts.money("us", 1500)
+      and "دلار" in texts.money("ir", 1500), texts.money("ir", 1500))
     noimg = [iid for iid, it in countries.ITEMS.items()
              if not ((it[6] and _os.path.exists(f"assets/img/{it[6]}"))
                      or _os.path.exists(countries.category_img(it[0])))]

@@ -17,13 +17,8 @@ def fa(x) -> str:
 
 
 def money(cid: str, amount) -> str:
-    """💰 مبلغ بر حسب پول رسمی کشور با نرخ زنده‌ی امروز — دقیق، بدون گرد کردن."""
-    import countries
-    from game import economy
-    nm = countries.CURRENCIES.get(cid, ("دلار", 1.0))[0]
-    rate = economy.fx(cid)
-    val = int(float(amount) * rate)
-    return f"{fa(val)} {nm}"
+    """💰 پول بازی: دلار — یکسان برای همه‌ی کشورها؛ دقیق و قابل محسابه."""
+    return f"{fa(int(amount))} دلار"
 
 
 def esc(s) -> str:

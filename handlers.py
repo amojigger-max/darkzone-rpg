@@ -82,21 +82,6 @@ async def _sticker(chat, emoji: str):
             await chat.send_sticker(fid)
 
 
-# ═══════════ 🚫 بازی فقط در گروه ═══════════
-
-@router.message(F.chat.type == "private")
-async def pv_only_group(m: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="➕ افزودن به یک گروه",
-                             url="https://t.me/REDarkZoneBot?startgroup=true")]])
-    await m.answer(texts.PV_ONLY, reply_markup=kb)
-
-
-@router.callback_query(F.message.chat.type == "private")
-async def pv_cb_only_group(c: CallbackQuery):
-    await c.answer("🎮 بازی فقط در گروه!", show_alert=True)
-
-
 # ═══════════ 👑 پنل مدیریت مالک ═══════════
 
 def kb_help(page: int = 1) -> InlineKeyboardMarkup:
@@ -1035,7 +1020,6 @@ async def cb_ally(c: CallbackQuery):
     await c.answer()
 
 
-@router.callback_query(F.data.startswith("st:"))
 async def _delayed_missile(chat_id, uid):
     """💥 برخورد موج موشکی بعد از زمان پرواز — ارسال خودکار به گروه."""
     await asyncio.sleep(war.MISSILE_FLIGHT)
@@ -1496,8 +1480,8 @@ async def fa_words(m: Message):
                         parse_mode="HTML", reply_markup=kb_main())
                     ok_edit = True
             if ok_edit:
-                return await m.answer("🔔 منوت همین‌جاست — یک دقیقه صبر کن برای منوی تازه",
-                                      parse_mode="HTML")
+                return
+            # ویرایش نشد (پیام قدیمی/حذف‌شده) → منوی تازه می‌آید
         sent = await m.answer(state.card(uid) if act else texts.WELCOME,
                               parse_mode="HTML",
                               reply_markup=kb_main(uid) if act else kb_countries())
