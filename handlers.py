@@ -113,6 +113,13 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🎖 سربازها", callback_data="ad:troops")],
         [InlineKeyboardButton(text="🧑‍✈️ ثبت بازیکن", callback_data="ad:reg"),
          InlineKeyboardButton(text="🔄 تغییر کشور", callback_data="ad:chg")],
+        [InlineKeyboardButton(text="👑 رهبر دادن", callback_data="ad:lead"),
+         InlineKeyboardButton(
+             text="📰 خبرنامه: " + ("خاموش ❌" if db.kv_get("bl_off") else "روشن ✅"),
+             callback_data="ad:tog:bl")],
+        [InlineKeyboardButton(
+            text="⚡ رویداد گروهی: " + ("خاموش ❌" if db.kv_get("ev_off") else "روشن ✅"),
+            callback_data="ad:tog:ev")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -240,7 +247,7 @@ async def cb_admin(c: CallbackQuery):
     if c.from_user.id != config.OWNER_ID:
         await c.answer("👑 فقط مالک!", show_alert=True)
         return
-    what = c.data.split(":")[1]
+    what = c.data.split(":", 1)[1]
     if what == "stats":
         await _edit(c, _admin_stats(), kb_admin())
     elif what == "players":
@@ -254,6 +261,26 @@ async def cb_admin(c: CallbackQuery):
         lines.append("")
         lines.append(texts.DASH)
         await _edit(c, "\n".join(lines), kb_admin())
+    elif what == "lead":
+        _pend_set(config.OWNER_ID, c.message.chat.id, "alead")
+        await _edit(c, "\n".join([
+            texts.hdr("تعیین یا خلع رهبر", "👑"), "",
+            "✍️ الگو را بفرست:",
+            "▫️ <code>آیدی‌عددی نام‌کشور</code> — بازیکن رهبر شود",
+            "▫️ <code>خالی نام‌کشور</code> — کشور بدون رهبر (NPC)",
+            "", "«لغو» برای انصراف"]), kb_admin())
+    elif what == "tog:bl":
+        db.kv_set("bl_off", "" if db.kv_get("bl_off") else "1")
+        await _edit(c, "\n".join([
+            texts.hdr("تنظیمات", "⚙"), "",
+            "📰 خبرنامه‌ی گروه: " +
+            ("خاموش شد ❌" if db.kv_get("bl_off") else "روشن شد ✅")]), kb_admin())
+    elif what == "tog:ev":
+        db.kv_set("ev_off", "" if db.kv_get("ev_off") else "1")
+        await _edit(c, "\n".join([
+            texts.hdr("تنظیمات", "⚙"), "",
+            "⚡ رویداد گروهی: " +
+            ("خاموش شد ❌" if db.kv_get("ev_off") else "روشن شد ✅")]), kb_admin())
     elif what in ("reg", "chg"):
         _pend_set(config.OWNER_ID, c.message.chat.id,
                   "areg" if what == "reg" else "achg")
@@ -1291,6 +1318,20 @@ async def fa_words(m: Message):
         if pend == "stmt":
             sent = await m.answer(politics.statement(uid, t), parse_mode="HTML",
                                   reply_markup=kb_pol())
+            _own(m, sent, uid)
+            return sent
+        if pend == "alead":
+            parts2 = t.split()
+            if not (len(parts2) >= 2
+                    and (parts2[0].isdigit() or parts2[0] in ("خالی", "-"))):
+                _pend_set(uid, m.chat.id, "alead")
+                sent = await m.answer("🔎 الگو: <code>آیدی‌عددی نام‌کشور</code> "
+                                      "یا <code>خالی نام‌کشور</code>",
+                                      parse_mode="HTML", reply_markup=kb_admin())
+                _own(m, sent, uid)
+                return sent
+            sent = await m.answer(_admin_leader(t), parse_mode="HTML",
+                                  reply_markup=kb_admin())
             _own(m, sent, uid)
             return sent
         if pend in ("areg", "achg"):

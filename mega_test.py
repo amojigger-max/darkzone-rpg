@@ -686,7 +686,6 @@ async def main():
     fb = _FBot()
     GID1 = -(930000 + db.now() % 9000)
     db.kv_set(f"joined:{GID1}", "")
-    db.GAME.set(-100)
     await handlers._group_hello(fb, GID1, "TestBot")
     T("پیام ورود فرستاده شد", len(fb.sent) == 1 and "کشورت را انتخاب" in fb.sent[0],
       fb.sent[:1])
@@ -714,6 +713,26 @@ async def main():
     # غیرمالک نمی‌تواند
     out = await cb(P3, "ad:reg")
     T("ثبت فقط مالک", "فقط مالک" in out, out[:60])
+    # رهبر دادن دکمه‌ای
+    out = await cb(OWNER, "ad:lead")
+    T("دکمه‌ی رهبر دادن", "خلع" in out or "الگو" in out, out[:80])
+    out = await cmd("555002 نپال", OWNER)
+    T("رهبر دکمه‌ای", "رهبر" in out or "نپال" in out, out[:90])
+    await cb(OWNER, "ad:lead")
+    out = await cmd("چرت", OWNER)
+    T("رهبر ورودی غلط", "الگو" in out, out[:80])
+    # تنظیمات دکمه‌ای
+    out = await cb(OWNER, "ad:tog:bl")
+    T("خبرنامه خاموش", "خاموش" in out, out[:80])
+    out = await cb(OWNER, "ad:tog:bl")
+    T("خبرنامه روشن", "روشن شد" in out, out[:80])
+    out = await cb(OWNER, "ad:tog:ev")
+    T("رویداد خاموش", "خاموش" in out, out[:80])
+    out = await cb(OWNER, "ad:tog:ev")
+    T("رویداد روشن", "روشن شد" in out, out[:80])
+    kb = handlers.kb_admin()
+    btns = " ".join(b.text for row in kb.inline_keyboard for b in row)
+    T("پنل مدیریت کامل", all(x in btns for x in ("رهبر", "خبرنامه", "رویداد", "ثبت", "تغییر")), btns)
 
     print(f"\n{'═' * 20} نتیجه {'═' * 20}")
     print(f"✅ موفق: {len(PASS)}")
