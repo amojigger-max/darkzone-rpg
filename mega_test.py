@@ -88,7 +88,8 @@ async def cb(uid, data):
           "dl": handlers.cb_daily, "wk": handlers.cb_work, "evc": handlers.cb_evc,
           "inv": handlers.cb_invest, "ivb": handlers.cb_invest_buy,
           "ivc": handlers.cb_invest_collect, "ifix": handlers.cb_infra_fix,
-          "ibld": handlers.cb_infra_build, "aim": handlers.cb_aim,
+          "ibld": handlers.cb_infra_build, "pm": handlers.cb_panel,
+          "aim": handlers.cb_aim,
           "aimk": handlers.cb_aim_kind, "rv": handlers.cb_revolt,
           "tb": handlers.cb_tbuy, "ts": handlers.cb_tsell,
           "tct": handlers.cb_tcontract, "ct": handlers.cb_contract,
@@ -1151,6 +1152,27 @@ async def main():
     out = await cb(uid, f"hp:1")
     T("جایزه فقط یک‌بار", st.get(uid)["money"] == _m0 + 300)
     T("راهنما با ۵ صفحه", len(texts.HELP_PAGES) == 5)
+
+    # ═══ v43: پنل دائمی + fx امن ═══
+    import re as _re2
+    _fx1 = texts.fx('🔥 <a href="tg://user?id=9">🔥بازیکن🔥</a> 🚀', seed=1)
+    T("fx لینک را نمی‌شکند",
+      _re2.search(r'<a[^>]*>🔥بازیکن🔥</a>', _fx1) is not None
+      and _fx1.count("<tg-emoji") == 2, _fx1[:80])
+    _fx2 = texts.fx('🚀 <b>تیتر</b> 🇮🇷', seed=1)
+    T("fx تگ سالم", "<b>تیتر</b>" in _fx2 and _fx2.count("<tg-emoji") == 2, _fx2)
+    # پنل: دکمه برای همه — منوی تازه می‌فرستد
+    db.ex("UPDATE users SET country='ir' WHERE uid=?", (uid,))
+    out = await cb(uid, "pm:menu")
+    T("پنل: منوی من", bool(out), str(out)[:50])
+    out2 = await cb(uid, "pm:welf")
+    T("پنل: رفاه", "رضایت" in out2, str(out2)[:50])
+    out3 = await cb(uid, "pm:toll")
+    T("پنل: عوارض", "عوارض" in out3, str(out3)[:50])
+    T("متن پنل آماده", "همیشه کار می‌کند" in handlers.panel_text())
+    # بازیکن بدون کشور → خوش‌آمد
+    out4 = await cb(NOOB, "pm:menu")
+    T("پنل: تازه‌وارد", bool(out4), str(out4)[:40])
 
     # ═══ v38.1: مهاجرت ریست تازه — در دنیای موقت واقعی ═══
     import migrations as _mig

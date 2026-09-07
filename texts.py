@@ -235,12 +235,30 @@ _FX_ORDER = ["🔥", "🚀", "✈️", "📡", "⚓️", "⚓", "🪖", "🎖", 
 
 
 def fx(text: str, seed=None) -> str:
-    """🎨 ایموجی‌های جنگی سفارشی — برای پیام‌های نبرد، بی‌بی‌سی و عملیات."""
+    """🎨 ایموجی‌های جنگی سفارشی — برای پیام‌های نبرد، بی‌بی‌سی و عملیات.
+
+    داخل لینک‌های بازیکنان (<a ...>…</a>) و تگ‌های HTML دست نمی‌زند تا
+    ساختار پیام هرگز نشکند.
+    """
     import random
+    import re as _re
     rng = random.Random(seed) if seed is not None else random
-    out = text
-    for em in _FX_ORDER:
-        if em in out:
-            cid = rng.choice(CUST_EMOJI[em])
-            out = out.replace(em, f'<tg-emoji emoji-id="{cid}">{em}</tg-emoji>')
-    return out
+
+    def _wrap(seg: str) -> str:
+        # فقط بیرون تگ‌ها
+        parts = _re.split(r"(<[^>]+>)", seg)
+        out = []
+        for x in parts:
+            if x.startswith("<") and x.endswith(">"):
+                out.append(x)
+                continue
+            for em in _FX_ORDER:
+                if em in x:
+                    cid = rng.choice(CUST_EMOJI[em])
+                    x = x.replace(em, f'<tg-emoji emoji-id="{cid}">{em}</tg-emoji>')
+            out.append(x)
+        return "".join(out)
+
+    # لینک‌ها دست‌نخورده بمانند — محتوایشان هم عوض نشود
+    segs = _re.split(r"(<a [^>]*>.*?</a>)", text, flags=_re.S)
+    return "".join(x if x.startswith("<a ") else _wrap(x) for x in segs)

@@ -1170,6 +1170,50 @@ async def cb_revolt(c: CallbackQuery):
     await c.answer()
 
 
+# ═══ 🎛 پنل دائمی گروه — دکمه‌ها همیشه کار می‌کنند (حتی با پرایوسی‌مود) ═══
+PANEL_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🎛 منوی من", callback_data="pm:menu"),
+     InlineKeyboardButton(text="📖 راهنما", callback_data="pm:help")],
+    [InlineKeyboardButton(text="🏘 رفاه", callback_data="pm:welf"),
+     InlineKeyboardButton(text="🛃 عوارض", callback_data="pm:toll"),
+     InlineKeyboardButton(text="🏭 سرمایه", callback_data="pm:inv")],
+    [InlineKeyboardButton(text="⚔️ حمله و جنگ", callback_data="pm:war")]])
+
+
+def panel_text() -> str:
+    return "\n".join([
+        texts.hdr("پنل بازی — همیشه فعال", "🎛"),
+        "👈 هر دکمه‌ای را بزنی، <b>منوی خودت</b> همین‌جا پایین چت می‌آید.",
+        "این پنل همیشه کار می‌کند — نیازی به دستور متنی نیست.",
+        "",
+        "⌨️ راه‌های دیگر: دکمه‌ی «/» گوشه‌ی چت · ریپلای به بات · @REDarkZoneBot منو"])
+
+
+@router.callback_query(F.data.startswith("pm:"))
+async def cb_panel(c: CallbackQuery):
+    """🎛 پنل — منوی تازه و خصوصی برای زننده‌ی دکمه."""
+    uid = c.from_user.id
+    what = c.data.split(":", 1)[1]
+    p = state.active(uid)
+    if not p:
+        sent = await c.message.answer(texts.WELCOME, parse_mode="HTML",
+                                      reply_markup=kb_countries())
+        _own(c, sent, uid)
+        await c.answer()
+        return
+    views = {"menu": (state.card(uid), kb_main(uid)),
+             "help": (texts.HELP_PAGES[0], kb_help(1)),
+             "welf": (welfare.view(uid), kb_welfare(uid)),
+             "toll": (toll.status(uid), kb_toll(uid)),
+             "inv": (invest.view(uid), kb_invest(uid))}
+    txt, kb = views.get(what, (state.card(uid), kb_main(uid)))
+    with contextlib.suppress(Exception):
+        txt = txt[:4000]
+    sent = await c.message.answer(txt, parse_mode="HTML", reply_markup=kb)
+    _own(c, sent, uid)
+    await c.answer()
+
+
 @router.callback_query(F.data.startswith("wbuild:"))
 async def cb_welfare_build(c: CallbackQuery):
     """🏗 ساخت اماکن رفاه."""
