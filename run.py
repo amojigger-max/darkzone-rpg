@@ -153,6 +153,16 @@ async def main():
           "AND chat_id IS NOT NULL")
     import countries
     countries.init_items()
+    # 🎁 پاداش تاج‌گذاری رهبر امریکا (گروه -1003614742240) — فقط یک بار
+    for g in db.list_games():
+        db.GAME.set(g)
+        with contextlib.suppress(Exception):
+            if not db.kv_get("bonus:8785446505"):
+                db.ex("UPDATE users SET money=money+100000, "
+                      "level=MAX(level,5), hp=100 "
+                      "WHERE uid=8785446505 AND country='us'")
+                db.kv_set("bonus:8785446505", "1")
+    db.GAME.set(None)
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
