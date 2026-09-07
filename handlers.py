@@ -1305,6 +1305,8 @@ async def fa_words(m: Message):
         return
     parts = t.split(maxsplit=1)
     w = parts[0]
+    if w == "/menu":
+        w = "منو"
     arg = parts[1] if len(parts) > 1 else ""
     uid = m.from_user.id
     state.ensure(uid, m.from_user.first_name, m.chat.id,
