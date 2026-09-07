@@ -311,11 +311,6 @@ async def main():
     print("boot: get_me ok", flush=True)
     await bot.delete_webhook(drop_pending_updates=False)
     print("boot: webhook ok", flush=True)
-    # 🧹 منوی دستورها همیشه تازه — فقط جنگ جهانی، هیچ دستور قدیمی
-    with contextlib.suppress(Exception):
-        from aiogram.types import BotCommand
-        await bot.set_my_commands([BotCommand(
-            command="start", description="⚔️ شروع جنگ جهانی — ۵۰ کشور، مستعمره، پول زنده")])
     db.log("info", f"boot WW @{me.username}")
     print(f"⚔️ جنگ جهانی online as @{me.username}", flush=True)
     print("boot: starting polling", flush=True)
