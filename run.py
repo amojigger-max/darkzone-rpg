@@ -229,6 +229,12 @@ async def main():
 
     handlers.WORLD_OF = _world_of
 
+    # 🎞 پک استیکر دارک‌زون — در بوت آماده می‌شود
+    with contextlib.suppress(Exception):
+        ss = await bot.get_sticker_set("darkzone_arsenal_by_REDarkZoneBot")
+        handlers.STICKERS = {s.emoji: s.file_id for s in ss.stickers}
+        print(f"🎞 sticker pack: {len(handlers.STICKERS)} sticker", flush=True)
+
     class Guard(BaseMiddleware):
         async def __call__(self, handler, event, data):
             # 🌍 دنیای این پیام = همین گروه — همه‌چیز جدا

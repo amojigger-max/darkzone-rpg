@@ -71,6 +71,15 @@ TEXT_ALLOWED = {
 }
 bot: Bot = None
 WORLD_OF = None   # 💬 حلقه‌ی پیوی → دنیای بازیکن (run.py در بوت ست می‌کند)
+STICKERS: dict = {}   # 🎞 پک استیکر دارک‌زون — ایموجی → file_id (run.py پر می‌کند)
+
+
+async def _sticker(chat, emoji: str):
+    """🎞 استیکر مرتبط را می‌فرستد — اگر پک آماده باشد."""
+    fid = STICKERS.get(emoji)
+    if fid:
+        with contextlib.suppress(Exception):
+            await chat.send_sticker(fid)
 
 
 # ═══════════ 🚫 بازی فقط در گروه ═══════════
@@ -1056,6 +1065,7 @@ async def cb_strike(c: CallbackQuery):
         # 🚀 پرتاب — برخورد بعد از زمان پرواز؛ دشمن فرصت تقویت پدافند دارد
         msg = war.launch_missile(uid, count)
         if "در راه" in msg:
+            await _sticker(c.message.chat, "🚀")
             if TEST_MODE:
                 msg += "\n\n" + war.resolve_missile(uid)
             else:
@@ -1215,6 +1225,8 @@ async def cb_declare_war(c: CallbackQuery):
     p = state.active(uid)
     kb = kb_strikes(uid) if (p and war.war_of(p["country"])) else kb_pol()
     await _edit(c, msg, kb)
+    if "اعلام جنگ" in msg:
+        await _sticker(c.message.chat, "💥")
     await c.answer()
 
 
