@@ -332,7 +332,7 @@ async def main():
     # زنده‌های تازه‌ای که پاسخ می‌دهند: منو/شروع/راهنما/دستورها/تجارت/پروفایل/نظامی/جهان/جنگ/حمله/خرید
     dead = ["کارنامه", "کارت", "ارتشی", "سرباز",
             "رزم", "جنگیدن", "استراحت", "درمان", "تعمیر", "جیره", "دستمزد",
-            "احزاب", "عضویت x", "شورش", "جاسوسی", "رتبه", "برترین", "نقشه",
+            "احزاب", "عضویت x", "جاسوسی", "رتبه", "برترین", "نقشه",
             "بازار", "اقتصاد", "پدافند", "جبهه", "اخبار", "ارتش", "ماموریت",
             "مأموریت", "چالش", "جایزه", "بازارسیاه", "سیاه", "صلح",
             "تحریم", "تنگه", "قبول", "تسلیم", "بیانیه", "حزب",
@@ -972,6 +972,23 @@ async def main():
     _t1 = texts.fx("🔥 🚀 🇮🇷", seed=1)
     T("ایموجی سفارشی", _t1.count("tg-emoji") == 6 and "🇮🇷" in _t1, _t1[:50])
     T("ایموجی بدون تغییر متن", texts.fx("سلام", seed=1) == "سلام")
+
+    # ═══ v39.3: پل اسلش‌دستور + منشن — ضد پرایوسی‌مود ═══
+    m_sl = Msg("/menu", uid)
+    await handlers.cmd_slash_bridge(m_sl)
+    T("/menu = منو", bool(getattr(m_sl, "out", None)), str(getattr(m_sl, "out", ""))[:50])
+    m_sl2 = Msg("/buy", uid)
+    await handlers.cmd_slash_bridge(m_sl2)
+    T("/buy = زرادخانه", "زرادخانه" in getattr(m_sl2, "out", ""), str(m_sl2.out)[:50])
+    m_sl3 = Msg("/revolt@REDarkZoneBot", uid)
+    await handlers.cmd_slash_bridge(m_sl3)
+    T("/revolt با @بات", bool(getattr(m_sl3, "out", None)), str(getattr(m_sl3, "out", ""))[:50])
+    m_mn = Msg("سلام @REDarkZoneBot منو", uid)
+    await handlers.fa_words(m_mn)
+    T("منشن = منو", bool(getattr(m_mn, "out", None)), str(getattr(m_mn, "out", ""))[:50])
+    m_mn2 = Msg("@REDarkZoneBot", uid)
+    await handlers.fa_words(m_mn2)
+    T("فقط منشن = منو", bool(getattr(m_mn2, "out", None)), str(getattr(m_mn2, "out", ""))[:50])
 
     # ═══ v39.2: انقلاب، ساختمان، هدفمند، دست‌نشانده ═══
     # 🏗 ساختمان ملی

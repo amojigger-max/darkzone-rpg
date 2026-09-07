@@ -70,7 +70,7 @@ TEXT_ALLOWED = {
     "حمله", "نبرد", "خرید", "زرادخانه", "تجهیزات",        # نام‌های رایج
     "دستورها", "دستور", "دستورات", "کمک",                 # فهرست دستورها
     "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی",           # سرمایه‌گذاری
-    "زیرساخت",                                            # زیرساخت جنگی
+    "زیرساخت", "انقلاب", "شورش",                          # زیرساخت + انقلاب
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -810,6 +810,30 @@ async def on_my_chat_member(ev):
 
 # ═══════════ 🚀 شروع ═══════════
 
+# ═══ ⌨️ پل دستورهای اسلش — حتی با پرایوسی‌مودِ تلگرام، /دستورها همیشه می‌رسند ═══
+_SLASH_MAP = {
+    "menu": "منو", "help": "راهنما", "commands": "دستورها", "cmds": "دستورها",
+    "buy": "خرید", "shop": "خرید", "arsenal": "زرادخانه",
+    "attack": "حمله", "war": "جنگ", "fight": "حمله",
+    "trade": "تجارت", "profile": "پروفایل", "me": "پروفایل", "world": "جهان",
+    "invest": "سرمایه", "mine": "معدن", "infra": "زیرساخت",
+    "revolt": "انقلاب",
+}
+
+
+@router.message(Command(*list(_SLASH_MAP)))
+async def cmd_slash_bridge(m: Message):
+    """/menu → منو و ... — همان نتیجه، مسیر همیشه‌سالم."""
+    if not m.text:
+        return
+    name = m.text.split()[0][1:].split("@")[0].lower()
+    word = _SLASH_MAP.get(name)
+    if not word:
+        return
+    m.text = word
+    return await fa_words(m)
+
+
 @router.message(Command("start"))
 @router.message(F.text.in_(["شروع", "استارت", "شروع کن", "شروع بازی", "استارت کن"]))
 async def cmd_start(m: Message):
@@ -1515,7 +1539,14 @@ def _v_inv(uid):
 
 
 def _v_infra(uid):
-    return infra.view(uid), kb_infra(uid)
+    from game import politics
+    return (infra.view(uid) + "\n\n" + infra.buildings_view(uid)
+            + "\n\n" + politics.revolt_view(uid)), kb_infra(uid)
+
+
+def _v_revolt(uid):
+    from game import politics
+    return politics.revolt_view(uid), kb_revolt(uid)
 
 
 # ⌨️ روال دستورها: هر کار یک نام اصلی + نام‌های رایج — همه به یک نتیجه
@@ -1525,7 +1556,7 @@ WORD_VIEWS = {
     "جنگ": _v_war, "حمله": _v_war, "نبرد": _v_war,
     "خرید": _v_ars, "زرادخانه": _v_ars, "تجهیزات": _v_ars,
     "سرمایه": _v_inv, "سرمایه‌گذاری": _v_inv, "معدن": _v_inv, "دارایی": _v_inv,
-    "زیرساخت": _v_infra,
+    "زیرساخت": _v_infra, "انقلاب": _v_revolt, "شورش": _v_revolt,
 }
 
 
@@ -1571,6 +1602,13 @@ async def fa_words(m: Message):
     t = (m.text or "").strip()
     if not t:
         return
+    # 💬 منشن بات — حتی با پرایوسی‌مود تلگرام می‌رسد؛ دستور را از دل متن بگیر
+    if "@REDarkZoneBot" in t:
+        t = t.replace("@REDarkZoneBot", "").strip()
+        if not t:
+            t = "منو"
+        elif not t.isdigit():
+            t = next((w for w in t.split() if w in TEXT_ALLOWED), "منو")
     parts = t.split(maxsplit=1)
     w = parts[0]
     if w == "/menu":

@@ -180,6 +180,22 @@ async def main():
     db.GAME.set(None)
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # ⌨️ منوی دستورهای اسلش — دکمه‌ی / تلگرام؛ با پرایوسی‌مود هم می‌رسند
+    with contextlib.suppress(Exception):
+        from aiogram.types import BotCommand
+        await bot.set_my_commands([
+            BotCommand(command="menu", description="🎛 منوی اصلی بازی"),
+            BotCommand(command="start", description="🚪 شروع / انتخاب کشور"),
+            BotCommand(command="attack", description="⚔️ حمله و جنگ"),
+            BotCommand(command="buy", description="🛒 زرادخانه و خرید"),
+            BotCommand(command="invest", description="🏭 سرمایه‌گذاری"),
+            BotCommand(command="infra", description="🏗 زیرساخت و ساخت‌وساز"),
+            BotCommand(command="revolt", description="🔥 انقلاب مردمی"),
+            BotCommand(command="trade", description="💰 تجارت"),
+            BotCommand(command="profile", description="👤 پروفایل"),
+            BotCommand(command="help", description="📖 راهنمای کامل"),
+            BotCommand(command="commands", description="⌨️ فهرست دستورها"),
+        ])
 
     # 🚦 ضدفلود تلگرام: صف ارسال هر گروه + تلاش دوباره‌ی خودکار بعد از 429
     from aiogram.client.session.middlewares.base import BaseRequestMiddleware
