@@ -1,0 +1,19 @@
+name: DarkZone regression tests
+on:
+  push:
+    paths: ['**.py', 'requirements*.txt', 'pytest.ini', '.github/workflows/tests.yml']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m compileall -q .
+      - run: python -m pyflakes config.py db.py schema.py countries.py texts.py handlers.py advanced_handlers.py maritime_handlers.py reward_handlers.py run.py save_db.py migrations.py callbacks.py middleware.py messaging.py htmlsafe.py help_content.py game
+      - run: python -m pytest -q
