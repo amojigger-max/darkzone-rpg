@@ -1522,23 +1522,10 @@ async def fa_words(m: Message):
     if w in ("شروع", "استارت", "شروع کن", "شروع بازی", "استارت کن"):
         return await cmd_start(m)
     if w == "منو":
+        # ✅ همیشه منوی تازه — بدون کول‌داون و ویرایش پیام قدیمی؛
+        # بازیکن هر بار «منو» بزند، پاسخ تازه پایین چت می‌آید.
         act = state.active(uid)
-        # 🔔 کول‌داون: تا ۱ دقیقه منوی تازه نمی‌آید — تگ روی منوی قبلی
         last = (db.kv_get(f"menu:{uid}", "") or "").split(":")
-        if act and len(last) == 2 and db.now() - int(last[1]) < 60:
-            card = state.card(uid)
-            tag = texts.mention(uid, m.from_user.first_name or "بازیکن")
-            ok_edit = False
-            if handlers_bot():
-                with contextlib.suppress(Exception):
-                    await handlers_bot().edit_message_text(
-                        chat_id=m.chat.id, message_id=int(last[0]),
-                        text=f"🔔 {tag}\n\n{card}"[:4000],
-                        parse_mode="HTML", reply_markup=kb_main())
-                    ok_edit = True
-            if ok_edit:
-                return
-            # ویرایش نشد (پیام قدیمی/حذف‌شده) → منوی تازه می‌آید
         sent = await m.answer(state.card(uid) if act else texts.WELCOME,
                               parse_mode="HTML",
                               reply_markup=kb_main(uid) if act else kb_countries())
