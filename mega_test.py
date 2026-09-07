@@ -11,6 +11,7 @@ countries.init_items()
 import handlers
 handlers.TEST_MODE = True
 import config
+import texts
 from game import state as st, war, military, defense, ai, economy, politics, quests, geo, guide, events
 
 PASS, FAIL = [], []
@@ -465,6 +466,11 @@ async def main():
     mm6 = M2("/menu", 777)
     await handlers.fa_words(mm6)
     T("دستور /menu", mm6.out and "پرونده" in mm6.out, mm6.out)
+    mm7 = M2("/help", 777)
+    await handlers.fa_words(mm7)
+    T("دستور /help", mm7.out and "راهنما" in mm7.out, mm7.out[:80])
+    T("راهنمای تجارت", any("میز تجارت" in p for p in texts.HELP_PAGES))
+    T("راهنمای جنگ منطقی", any("مرز مشترک" in p for p in texts.HELP_PAGES))
     mm4 = M2("تحویل", 777)
     await handlers.fa_words(mm4)
     T("کلمه‌ی رویداد حذف شد", mm4.out is None or mm4.out == "", getattr(mm4, "out", ""))

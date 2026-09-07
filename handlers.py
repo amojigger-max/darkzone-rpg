@@ -1356,6 +1356,11 @@ async def fa_words(m: Message):
                                   parse_mode="HTML", reply_markup=kb_pol())
             _own(m, sent, uid)
             return sent
+    if w == "/help":
+        sent = await m.answer(texts.HELP_PAGES[0], parse_mode="HTML",
+                              reply_markup=kb_help(1))
+        _own(m, sent, uid)
+        return sent
     # 🎛 گروه تمیز: هر متن دیگری نادیده — همه‌چیز از «منو»
     if not TEST_MODE and w not in TEXT_ALLOWED:
         return
