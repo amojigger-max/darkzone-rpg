@@ -33,10 +33,10 @@ def _news(w) -> str | None:
 _last = {}
 
 
-def _too_fast(uid: int) -> bool:
-    """ضداسپم فقط فردی — ۲ ثانیه."""
+def _too_fast(uid: int, gap: float = 1.0) -> bool:
+    """ضداسپم فقط فردی — پیام ۱ ثانیه، دکمه فقط ۰٫۲۵ (ضد دوضرب)."""
     t = time.time()
-    if t - _last.get(uid, 0) < 1:
+    if t - _last.get(uid, 0) < gap:
         return True
     _last[uid] = t
     return False
@@ -170,7 +170,8 @@ async def main():
             if chat is not None and getattr(chat, "id", 0) < 0:
                 db.GAME.set(chat.id)
             who = getattr(event, "from_user", None)
-            if who and who.id != config.OWNER_ID and _too_fast(who.id):
+            if who and who.id != config.OWNER_ID and _too_fast(
+                    who.id, 1.0 if isinstance(event, Message) else 0.25):
                 # 🤫 گروه تمیز — سریع‌زدن‌ها بی‌سروصدا رد می‌شوند
                 if not isinstance(event, Message):
                     with contextlib.suppress(Exception):

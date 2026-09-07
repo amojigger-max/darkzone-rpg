@@ -203,6 +203,10 @@ def kv_set(k, v):
     ex("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, str(v)))
 
 
+def kv_del(k):
+    ex("DELETE FROM kv WHERE k=?", (k,))
+
+
 def kv_get(k, d=None):
     r = one("SELECT v FROM kv WHERE k=?", (k,))
     return r["v"] if r else d

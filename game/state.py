@@ -81,7 +81,7 @@ def card(uid) -> str:
         t.hdr("پرونده‌ی نظامی", "🎖"),
         t.row("نام", p["name"]),
         t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}"),
-        t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else ("عضو حزب" if party else "شهروند")),
+        t.row("نقش", "👑 رهبر کشور"),
         t.DASH,
         t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),

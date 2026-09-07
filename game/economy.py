@@ -97,8 +97,8 @@ def on_war_start():
 def toggle_strait(uid: int, name: str) -> str:
     """بستن/بازکردن تنگه — فقط رهبران."""
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور می‌تواند تنگه را ببندد یا باز کند."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     key = {"هرمز": "hormuz", "باب‌المندب": "bab", "تایوان": "taiwan", "سوئز": "suez"}.get(name)
     if not key:
         return "⛔ تنگه: هرمز · باب‌المندب · تایوان · سوئز"
@@ -142,8 +142,8 @@ def sanction(leader_uid: int, target: str) -> str:
     """تحریم کشور — رهبر یک کشور دیگر. یک سیستم واحد با تحریم AI:
     نرخ ارز ضعیف‌تر (fx)، سهم نفت نصف، ۲۴ ساعت اعتبار."""
     p = state.active(leader_uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبران می‌توانند تحریم اعلام کنند."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     if target == p["country"]:
         return "🤡 کشور خودت را تحریم کنی؟"
     import countries
@@ -307,8 +307,8 @@ def contract(uid: int, target: str) -> str:
     p = db.one("SELECT * FROM users WHERE uid=?", (uid,))
     if not p:
         return "⛔ اول «شروع»"
-    if not p["is_leader"]:
-        return "👑 فقط رهبر کشور قرارداد امضا می‌کند."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     if target == p["country"]:
         return "🤡 با خودت قرارداد بستی؟"
     if db.now() - int(db.kv_get(f"ct:{uid}", "0")) < CONTRACT_CD:

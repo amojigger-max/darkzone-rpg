@@ -335,8 +335,7 @@ def kb_trade(uid) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="+۵", callback_data=f"tb:{gid}:5"),
             InlineKeyboardButton(text="−۱", callback_data=f"ts:{gid}:1"),
             InlineKeyboardButton(text="−۵", callback_data=f"ts:{gid}:5")])
-    p = state.active(uid)
-    if p and p["is_leader"]:
+    if state.active(uid):
         rows.append([InlineKeyboardButton(text="📜 قرارداد تجاری", callback_data="tct:")])
     rows.append([InlineKeyboardButton(text="💼 میز تجارت", callback_data="mn:trade"),
                  InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
@@ -360,14 +359,11 @@ def _howto(uid) -> str:
         "▫️ ⚡ رویداد گروهی — هر ۴۰ دقیقه، اولین دکمه‌بزن برنده",
         "",
         "📈 پول بیشتر؟ 💼 تجارت — ارزان وارد کن، گران صادر کن؛",
-        "   📜 قرارداد تجاری (رهبر) — پاداش ۱۵ تا ۴۵ درصد.",
+        "   📜 قرارداد تجاری — پاداش ۱۵ تا ۴۵ درصد.",
     ]
-    if p["is_leader"]:
-        w = war.war_of(p["country"])
-        lines.append("👑 رهبری: " + ("⚔️ در جنگی — 🪖 نظامی → فرماندهی جنگ"
-                                    if w else "🕊 در صلحی — 🛡 پدافند را قوی نگه دار"))
-    else:
-        lines.append("🪖 سربازی: ⚔️ رزم بزن، سطح بگیر — رهبر بگیری، فرمان میدهی")
+    w = war.war_of(p["country"])
+    lines.append("👑 رهبری: " + ("⚔️ در جنگی — 🪖 نظامی → فرماندهی جنگ"
+                                if w else "🕊 در صلحی — 🛡 پدافند را قوی نگه دار"))
     return "\n".join(lines)
 
 
@@ -666,20 +662,28 @@ def _join_text(gid, uname: str = "") -> str:
 
 
 async def _group_hello(bt, gid: int, uname: str = ""):
-    """⚔️ یک‌بار برای هر گروه: معرفی + انتخاب کشور + پین."""
-    if gid >= 0 or db.kv_get(f"joined:{gid}"):
+    """⚔️ یک‌بار برای هر گروه: معرفی + انتخاب کشور + پین.
+
+    زمینه‌ی دیتابیس موقتاً به دنیای همین گروه می‌رود و در پایان برمی‌گردد.
+    """
+    if gid >= 0:
         return
-    if not bt:
-        return
-    with contextlib.suppress(Exception):
-        db.GAME.set(gid)
-    db.kv_set(f"joined:{gid}", "1")
-    with contextlib.suppress(Exception):
-        sent = await bt.send_message(gid, _join_text(gid, uname),
-                                     reply_markup=kb_countries())
+    prev = db.GAME.get()
+    try:
         with contextlib.suppress(Exception):
-            await bt.pin_chat_message(gid, sent.message_id,
-                                      disable_notification=True)
+            db.GAME.set(gid)      # چک و نوشتن در دیتابیسِ همین گروه
+        if db.kv_get(f"joined:{gid}") or not bt:
+            return
+        db.kv_set(f"joined:{gid}", "1")
+        with contextlib.suppress(Exception):
+            sent = await bt.send_message(gid, _join_text(gid, uname),
+                                         reply_markup=kb_countries())
+            with contextlib.suppress(Exception):
+                await bt.pin_chat_message(gid, sent.message_id,
+                                          disable_notification=True)
+    finally:
+        with contextlib.suppress(Exception):
+            db.GAME.set(prev)
 
 
 @router.my_chat_member()
@@ -1085,8 +1089,8 @@ async def cb_tsell(c: CallbackQuery):
 async def cb_tcontract(c: CallbackQuery):
     uid = c.from_user.id
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        await _edit(c, "👑 فقط رهبر کشور قرارداد امضا می‌کند.", kb_trade(uid))
+    if not p:
+        await _edit(c, "⛔ اول «شروع» — کشورت را انتخاب کن.", kb_trade(uid))
     else:
         await _edit(c, texts.hdr("قرارداد تجاری", "📜") + "\n\nبا کدام کشور؟",
                     kb_targets(uid, "ct"))
@@ -1151,8 +1155,8 @@ async def cb_surrender_yes(c: CallbackQuery):
 @router.callback_query(F.data.startswith("sur:"))
 async def cb_surrender(c: CallbackQuery):
     p = state.active(c.from_user.id)
-    if not p or not p["is_leader"]:
-        await c.answer("👑 فقط رهبر کشور.", show_alert=True)
+    if not p:
+        await c.answer("⛔ اول «شروع» — کشورت را انتخاب کن.", show_alert=True)
         return
     await _edit(c, "\n".join([
         texts.hdr("تسلیم در جنگ", "🏳"), "",
@@ -1334,7 +1338,11 @@ async def fa_words(m: Message):
                                       parse_mode="HTML")
         sent = await m.answer(state.card(uid) if act else texts.WELCOME,
                               parse_mode="HTML",
-                              reply_markup=kb_main() if act else kb_countries())
+                              reply_markup=kb_main(uid) if act else kb_countries())
+        # 🧹 منوی قبلی این بازیکن آزاد می‌شود — حافظه کرشدار
+        if len(last) == 2:
+            with contextlib.suppress(Exception):
+                db.kv_del(f"mown:{m.chat.id}:{last[0]}")
         _own(m, sent, uid)
         if act:
             db.kv_set(f"menu:{uid}", f"{sent.message_id}:{db.now()}")

@@ -73,7 +73,7 @@ def tick() -> list:
         if random.random() > 0.45:
             continue
         # 🔑 کشورِ رهبر‌دار را NPC هدایت نمی‌کند — فقط دولت‌های بدون رهبر می‌جنگند
-        leaderless = [s for s in (w["a"], w["b"]) if not _has_leader(s)]
+        leaderless = [s for s in ("a", "b") if not _has_leader(w[s])]
         if not leaderless:
             continue
         r = _ai_strike(w)

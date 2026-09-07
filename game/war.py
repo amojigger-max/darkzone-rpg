@@ -32,8 +32,8 @@ def kind_of(iid: str) -> str:
 
 def alliance_request(leader_uid: int, target: str) -> str:
     p = state.active(leader_uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور می‌تواند اتحاد پیشنهاد کند."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     if target == p["country"]:
         return "⛔ با خودت؟"
     if target not in countries.COUNTRIES:
@@ -50,8 +50,8 @@ def alliance_request(leader_uid: int, target: str) -> str:
 
 def alliance_accept(leader_uid: int, cid: str) -> str:
     p = state.active(leader_uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     import json
     pend = db.jload(db.kv_get("alliance_pending"), {}) or {}
     if pend.get(str(p["country"])) != cid:
@@ -72,8 +72,8 @@ def allies_of(cid: str):
 def call_help(leader_uid: int) -> str:
     """رهبرِ درگیر جنگ → درخواست کمک از اتحاد."""
     p = state.active(leader_uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     w = db.one("SELECT * FROM wars WHERE status='active' AND (a=? OR b=?)",
                (p["country"], p["country"]))
     if not w:
@@ -92,8 +92,8 @@ def call_help(leader_uid: int) -> str:
 
 def peace_request(uid) -> str:
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     wr = war_of(p["country"])
     if not wr:
         return "🕊 کشورت در جنگ نیست."
@@ -106,8 +106,8 @@ def peace_request(uid) -> str:
 
 def peace_accept(uid) -> str:
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     wr = war_of(p["country"])
     if not wr:
         return "🕊 جنگی نیست."
@@ -123,8 +123,8 @@ def peace_accept(uid) -> str:
 def surrender(uid) -> str:
     """🏳 تسلیم — پایان جنگ با گران‌ترین بهاء: غرامت سنگین، شهرها می‌ماند، تحقیر."""
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     w = war_of(p["country"])
     if not w:
         return "🕊 کشورت در جنگ نیست."
@@ -232,8 +232,8 @@ def duel_accept(uid) -> str:
 
 def declare(leader_uid: int, target: str) -> str:
     p = state.active(leader_uid)
-    if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور می‌تواند جنگ اعلام کند."
+    if not p:
+        return "⛔ اول «شروع» — کشورت را انتخاب کن."
     tc = countries.COUNTRIES.get(target)
     if not tc or target == p["country"]:
         return "⛔ کشور هدف نامعتبر."
@@ -408,8 +408,8 @@ def _strike_precheck(uid, kind: str, count: int):
     بازنده: (None, پیام خطا) — هیچ چیز مصرف نشده.
     """
     p = state.active(uid)
-    if not p or not p["is_leader"]:
-        return None, "👑 فقط رهبر کشور."
+    if not p:
+        return None, "⛔ اول «شروع» — کشورت را انتخاب کن."
     w = war_of(p["country"])
     if not w:
         return None, "🕊 کشورت در جنگ نیست."
@@ -552,7 +552,7 @@ def resolve_missile(uid) -> str:
     if not d or db.now() - int(d.get("ts", 0)) > 120:
         return ""
     p = state.active(uid)
-    if not p or not p["is_leader"]:
+    if not p:
         return ""
     w = db.one("SELECT * FROM wars WHERE id=? AND status='active'", (d["war"],))
     if not w or p["country"] not in (w["a"], w["b"]):

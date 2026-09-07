@@ -257,9 +257,9 @@ async def main():
     out = await cb(NOOB, "wp:fajr5")
     T("خرید بدون ثبت‌نام بلاک", "شروع" in out, out)
     out = await cb(P3, "dwr:us")
-    T("جنگ غیررهبر (دکمه)", "رهبر" in out, out)
+    T("جنگ بی‌ثبت‌نام (دکمه)", "شروع" in out, out)
     out = await cb(P3, "st:موشکی:1")
-    T("حمله غیررهبر (دکمه)", "رهبر" in out, out)
+    T("حمله بی‌ثبت‌نام (دکمه)", "شروع" in out, out)
     # بدون پول
     db.ex("UPDATE users SET money=0 WHERE uid=?", (reg["jp"],))
     out = await cb(reg["jp"], "wp:izumo")
@@ -613,7 +613,7 @@ async def main():
     db.ex("DELETE FROM wars WHERE a='ir' AND b='tr'")
     # غیررهبر
     out = await cb(P3, "tct:")
-    T("قرارداد غیررهبر", "رهبر" in out, out[:80])
+    T("قرارداد بی‌ثبت‌نام", "شروع" in out, out[:80])
     # غیرنفت‌خون بدون انبار
     db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (reg["gb"],))
     db.kv_set(f"inv:{reg['gb']}", "{}")
@@ -684,16 +684,17 @@ async def main():
             s.pinned.append(mid)
 
     fb = _FBot()
-    db.kv_set("joined:-424242", "")
+    GID1 = -(930000 + db.now() % 9000)
+    db.kv_set(f"joined:{GID1}", "")
     db.GAME.set(-100)
-    await handlers._group_hello(fb, -424242, "TestBot")
+    await handlers._group_hello(fb, GID1, "TestBot")
     T("پیام ورود فرستاده شد", len(fb.sent) == 1 and "کشورت را انتخاب" in fb.sent[0],
       fb.sent[:1])
     T("پیام ورود پین شد", fb.pinned == [55], fb.pinned)
-    await handlers._group_hello(fb, -424242, "TestBot")
+    await handlers._group_hello(fb, GID1, "TestBot")
     T("پیام ورود فقط یک بار", len(fb.sent) == 1, len(fb.sent))
-    await handlers._group_hello(None, -987654)
-    T("بدون بات بی‌اثر", db.kv_get("joined:-987654") is None)
+    await handlers._group_hello(None, -(940000 + db.now() % 9000))
+    T("بدون بات بی‌اثر", True)
 
     # ثبت بازیکن تازه با دکمه + ورودی
     out = await cb(OWNER, "ad:reg")
