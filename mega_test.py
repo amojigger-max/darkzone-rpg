@@ -662,21 +662,21 @@ async def main():
     T("زودتر از ساعت = صبر", "دقیقه دیگر" in out or "شروع شد" in out, out[:60])
     db.kv_set(f"invt:{u_inv}", str(db.now() - 7200))          # ۲ ساعت گذشته
     out = _iv.collect(u_inv)
-    T("برداشت ۲ ساعت", "واریز شد" in out and "۳۰۰" in out, out[:80])
-    T("پول دقیق رسید", st.get(u_inv)["money"] == 97800, st.get(u_inv)["money"])
+    T("برداشت ۲ ساعت", "واریز شد" in out and "۲ ساعت" in out, out[:80])
+    T("پول دقیق رسید", st.get(u_inv)["money"] == 97720, st.get(u_inv)["money"])
     db.kv_set(f"invt:{u_inv}", str(db.now() - 5400))          # ۱.۵ ساعت
     out = _iv.collect(u_inv)
     T("ساعت کامل پرداخت", "واریز شد" in out, out[:60])
-    T("پول دقیق ۱ ساعت", st.get(u_inv)["money"] == 97950, st.get(u_inv)["money"])
+    T("پول دقیق ۱ ساعت", st.get(u_inv)["money"] == 97830, st.get(u_inv)["money"])
     db.kv_set(f"invt:{u_inv}", str(db.now() - 1800))          # نیم ساعت
     out = _iv.collect(u_inv)
     T("نیم ساعت = صبر", "دقیقه دیگر" in out, out[:60])
     db.kv_set(f"invt:{u_inv}", str(db.now() - 9000))          # ۲.۵ ساعت
     out = _iv.collect(u_inv)
     T("۲.۵ ساعت = پرداخت ۲", "واریز شد" in out and "۲ ساعت" in out, out[:80])
-    T("ناقص نیم‌ساعته حفظ", st.get(u_inv)["money"] == 98250, st.get(u_inv)["money"])
+    T("ناقص نیم‌ساعته حفظ", st.get(u_inv)["money"] == 98050, st.get(u_inv)["money"])
     _iv.buy(u_inv, "oil")
-    T("نرخ ساعتی جمع", _iv.rate(u_inv) == 570, _iv.rate(u_inv))
+    T("نرخ ساعتی جمع", _iv.rate(u_inv) == 360, _iv.rate(u_inv))
     _vv = _iv.view(u_inv)
     T("نمای سرمایه", "معدن طلا" in _vv and "دکل نفت" in _vv, _vv[:60])
     _cd = st.card(u_inv)
@@ -1133,6 +1133,24 @@ async def main():
     T("خاموش‌کردن", "خاموش شد" in _tg2[0], _tg2[0][:40])
     T("عوارض خاموش", not _tl.is_on())
     db.ex("UPDATE users SET country=?, money=1000 WHERE uid=?", (_po4, uid))
+
+    # ═══ v42: تعادل تاکتیکی + جایزه‌ی مطالعه‌ی راهنما ═══
+    T("کار ۱۰ دقیقه‌ای", st.WORK_CD == 600, st.WORK_CD)
+    from game import invest as _ivx
+    T("بازگشت سرمایه ~۲۴ ساعت",
+      all(20 <= pr // r <= 30 for _, _, pr, r in _ivx.ASSETS),
+      [(pr, r, pr // r) for _, _, pr, r in _ivx.ASSETS])
+    # 📖 جایزه‌ی مطالعه
+    db.kv_del(f"read:{uid}"); db.kv_del(f"guide_done:{uid}")
+    _m0 = st.get(uid)["money"]
+    for pg in range(1, len(texts.HELP_PAGES) + 1):
+        out = await cb(uid, f"hp:{pg}")
+    T("جایزه‌ی مطالعه پرداخت", st.get(uid)["money"] == _m0 + 300,
+      st.get(uid)["money"] - _m0)
+    T("نشان دانش‌آموخته", "دانش‌آموخته" in st.medals(uid))
+    out = await cb(uid, f"hp:1")
+    T("جایزه فقط یک‌بار", st.get(uid)["money"] == _m0 + 300)
+    T("راهنما با ۵ صفحه", len(texts.HELP_PAGES) == 5)
 
     # ═══ v38.1: مهاجرت ریست تازه — در دنیای موقت واقعی ═══
     import migrations as _mig

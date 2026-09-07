@@ -946,7 +946,23 @@ async def cb_helppage(c: CallbackQuery):
         page = max(1, min(len(texts.HELP_PAGES), int(c.data.split(":")[1])))
     except ValueError:
         page = 1
-    await _edit(c, texts.HELP_PAGES[page - 1], kb_help(page))
+    body = texts.HELP_PAGES[page - 1]
+    # 📖 جایزه‌ی مطالعه — همه‌ی صفحات را بخوان، 300 دلار + نشان
+    uid = c.from_user.id
+    if state.active(uid):
+        read = int(db.kv_get(f"read:{uid}", "0") or 0)
+        if page > read:
+            db.kv_set(f"read:{uid}", str(page))
+            read = page
+        last = len(texts.HELP_PAGES)
+        if read >= last and not db.kv_get(f"guide_done:{uid}"):
+            db.kv_set(f"guide_done:{uid}", "1")
+            db.ex("UPDATE users SET money=money+300 WHERE uid=?", (uid,))
+            body = (body + "\n\n" + texts.hdr("جایزه‌ی مطالعه", "📖") +
+                    "🎓 همه‌ی راهنما را خواندی! +300 دلار جایزه" +
+                    " + نشان «📖 دانش‌آموخته» به پروفایلت اضافه شد"
+                    )[:4000]
+    await _edit(c, body, kb_help(page))
     await c.answer()
 
 

@@ -127,6 +127,8 @@ def medals(uid) -> str:
         out.append("⭐ فرمانده")
     if int(db.kv_get(f"streak:{uid}", "0")) >= 5:
         out.append("🔥 سرباز وفادار")
+    if db.kv_get(f"guide_done:{uid}"):
+        out.append("📖 دانش‌آموخته")
     return "🏅 " + " · ".join(out) if out else ""
 
 
@@ -241,7 +243,7 @@ def daily(uid) -> str:
     return "\n".join(lines)
 
 
-WORK_CD = 300          # ⏱ هر ۵ دقیقه یک کار — درآمد رایگانِ همیشه‌در-دسترس
+WORK_CD = 600          # ⏱ هر ۱۰ دقیقه یک شیفت — تاکتیکی، نه اسپمی
 
 
 def work(uid) -> str:
@@ -258,7 +260,7 @@ def work(uid) -> str:
     from game import military as _mil
     from game import infra as _ifr
     from game import welfare as _wl
-    pay = int((120 + p["level"] * 10) * _mil.eco_mult(uid)
+    pay = int((150 + p["level"] * 12) * _mil.eco_mult(uid)
               * _ifr.output_mult(p["country"]) * _wl.welfare_mult(p["country"]))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
     wl = [
