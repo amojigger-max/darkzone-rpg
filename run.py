@@ -173,6 +173,11 @@ async def main():
     # 🎁 مهاجرت‌های یک‌باره‌ی دنیاها: هدیه‌ها + پول شروع مناسب
     import migrations
     migrations.run_all()
+    # 🛒 زرادخانه‌ی هر دنیا هم تجهیزات نخبه را بگیرد
+    for g in db.list_games():
+        db.GAME.set(g)
+        countries.init_items()
+    db.GAME.set(None)
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
