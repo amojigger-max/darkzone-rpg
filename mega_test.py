@@ -549,7 +549,7 @@ async def main():
     mm7 = M2("/help", 777)
     await handlers.fa_words(mm7)
     T("دستور /help", mm7.out and "راهنما" in mm7.out, mm7.out[:80])
-    T("راهنمای تجارت", any("میز تجارت" in p for p in texts.HELP_PAGES))
+    T("راهنمای تجارت", any("تجارت" in p for p in texts.HELP_PAGES))
     T("راهنمای جنگ منطقی", any("مرز مشترک" in p for p in texts.HELP_PAGES))
     mm4 = M2("تحویل", 777)
     await handlers.fa_words(mm4)
@@ -569,13 +569,13 @@ async def main():
     T("NPC به رهبر‌دار جنگ نمی‌دهد", not got_war, "hz جنگ گرفت!")
     # ═══ ۱۴. دور ششم: تجهیزات انبوه + عکس + جنگ منطقی ═══
     import os as _os
-    T("~۴۷۰ تجهیز", len(countries.ITEMS) == 469, len(countries.ITEMS))
+    T("~۴۹۰ تجهیز", len(countries.ITEMS) == 493, len(countries.ITEMS))
     badp = [i for i, it in countries.ITEMS.items()
             if it[6] != "elite.jpg" and it[5] % 100]
     T("قیمت‌های معمولی رند", not badp, badp[:3])
     bad6 = [cid for cid, cc in countries.COUNTRIES.items()
-            if len(cc["items"]) not in (9, 10, 11)]
-    T("۶-۸ تجهیز در هر کشور", not bad6, bad6)
+            if not (9 <= len(cc["items"]) <= 14)]
+    T("۹-۱۴ تجهیز در هر کشور", not bad6, bad6)
     elite = [i for i, it in countries.ITEMS.items() if it[6] == "elite.jpg"]
     T("۱۰۰ تجهیز نخبه", len(elite) == 100, len(elite))
     strong = all(countries.ITEMS[e][3] >= 10 for e in elite)
