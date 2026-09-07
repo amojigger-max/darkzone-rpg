@@ -1,0 +1,34 @@
+{
+  "python": "3.12.14",
+  "packages": {
+    "aiogram": "3.31.0",
+    "aiohttp": "3.14.3",
+    "pydantic": "2.13.5",
+    "pytest": "9.1.1",
+    "pytest-asyncio": "1.4.0",
+    "pyflakes": "3.4.0"
+  },
+  "tests_passed": 365,
+  "live_telegram_test": false,
+  "database": "isolated temporary worlds only",
+  "failures": 0,
+  "errors": 0,
+  "by_module": {
+    "tests.test_advanced": 36,
+    "tests.test_campaign": 60,
+    "tests.test_database": 12,
+    "tests.test_delivery": 21,
+    "tests.test_economy": 45,
+    "tests.test_energy_fleet": 42,
+    "tests.test_handlers": 111,
+    "tests.test_payout_storage": 13,
+    "tests.test_rewards_reset": 8,
+    "tests.test_runtime": 2,
+    "tests.test_save_preflight": 15
+  },
+  "catalog_items": 614,
+  "countries": 50,
+  "version": "41.1.1",
+  "guide_pages": 16,
+  "live_deployed": false
+}

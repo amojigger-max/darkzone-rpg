@@ -20,6 +20,7 @@ def branch_name(p) -> str:
     return b if b in c["branches"] else ""
 
 
+@db.atomic
 def join_branch(uid, idx: int) -> str:
     p = state.active(uid)
     if not p:
@@ -125,7 +126,7 @@ def arsenal(uid) -> str:
     lines = [texts.hdr(f"زرادخانه {c['name']}", "🛒"),
              f"🎖 تخصص کشور: {sp[2]} — +{texts.fa(sp[1])}٪ در حمله‌ی {sp[0]}",
              f"💰 خزانه: {texts.money(p['country'], p['money'])}", ""]
-    from game import economy
+    from game import economy,catalog
     for iid in c["items"]:
         it = countries.ITEMS[iid]
         own = db.one("SELECT qty,dur FROM inventory WHERE uid=? AND iid=?", (uid, iid))
@@ -133,7 +134,7 @@ def arsenal(uid) -> str:
         mark = (f"✅ {texts.fa(own['qty'])}× · دوام {texts.fa(own['dur'])}٪"
                 if own else f"💰 {texts.fa(price)}")
         lines.append(f"{it[1]} <b>{it[0]}</b> — ⚔️{texts.fa(it[3])} "
-                     f"🛡{texts.fa(it[4])} · {mark}")
+                     f"🛡{texts.fa(it[4])} · {mark}" + (" · برد راهبردی" if catalog.range_band(iid)==3 else " · برد منطقه‌ای") if catalog.primary(iid) in ("هوایی","پهپادی","موشکی") else f"{it[1]} <b>{it[0]}</b> — ⚔️{texts.fa(it[3])} 🛡{texts.fa(it[4])} · {mark}")
     deals = economy.daily_deals(p["country"])
     if deals:
         lines += ["", "🔥 <b>پیشنهاد ویژه‌ی امروز — ۲۰٪ تخفیف</b> (فقط امروز):"]
@@ -148,57 +149,35 @@ def arsenal(uid) -> str:
 MAX_QTY = 9
 
 
+@db.atomic
 def buy(uid, iid: str, qty: int = 1) -> str:
-    """خرید ×۱ یا ×۵ — عمده ۱۰٪ تخفیف، سقف ۹ عدد از هر تجهیز."""
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    it = countries.ITEMS.get(iid)
-    if not it or iid not in countries.COUNTRIES[p["country"]]["items"]:
-        return "⛔ این تجهیز در زرادخانه‌ی کشورت نیست."
-    # ⚡ برق ضعیف → خرید تجهیزات سنگین ممنوع (زیرساخت جنگی)
-    from game import infra as _if
-    if not _if.power_ok(p["country"]) and it[5] >= 3000:
-        return ("⚡ شبکه برق کشورت آسیب‌دیده — خرید تجهیزات سنگین ممکن نیست.\n"
-                "🪖 نظامی → 🏗 زیرساخت کشور → تعمیر شبکه برق")
-    qty = max(1, min(5, int(qty)))
-    deal = iid in economy.daily_deals(p["country"])
-    if qty >= 5:
-        qty = 5
-        cost = economy.real_price(it[5]) * 5 * 0.9     # عمده: ۱۰٪ تخفیف
-    else:
-        cost = economy.real_price(it[5])
-    cost = int(cost)
-    if deal:                                           # 🔥 تخفیف روزانه: ۲۰٪
-        cost = economy.deal_price(cost)
-    row = db.one("SELECT qty FROM inventory WHERE uid=? AND iid=?", (uid, iid))
-    have = row["qty"] if row else 0
-    if have + qty > MAX_QTY:
-        return f"📦 سقف نگهداری {texts.fa(MAX_QTY)} عدد است — داری: {texts.fa(have)}"
-    if p["money"] < cost:
-        return (f"💰 پول کم داری — لازم: {texts.money(p['country'], cost)} · "
-                f"داری: {texts.money(p['country'], p['money'])}")
-    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
-    db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,?,100) "
-          "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+?", (uid, iid, qty, qty))
-    from game import quests
-    quests.on_event(uid, "خرید")
-    t = texts
-    return (f"🛒 <b>{it[0]}</b> {it[1]} ×{t.fa(qty)} خریداری شد — "
-            f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪\n"
-            f"💰 باقی خزانه: {t.money(p['country'], p['money'] - cost)}")
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    if type(qty) is not int or not 1<=qty<=5:return '⛔ تعداد باید عدد صحیح ۱ تا ۵ باشد.'
+    it=countries.ITEMS.get(iid)
+    if not it or iid not in countries.COUNTRIES[p['country']]['items']:return '⛔ تجهیز در زرادخانهٔ کشورت نیست.'
+    from game import infra,quests
+    if not infra.power_ok(p['country']) and it[5]>=3000:return '⚡ برق کشور ضعیف است؛ خرید سنگین ممکن نیست.'
+    row=db.one('SELECT qty,dur FROM inventory WHERE uid=? AND iid=?',(uid,iid))
+    have=row['qty'] if row else 0
+    if have+qty>MAX_QTY:return f'📦 سقف هر تجهیز {MAX_QTY} عدد است.'
+    cost=it[5]*qty
+    if qty==5:cost=cost*90//100
+    if iid in economy.daily_deals(p['country']):cost=economy.deal_price(cost)
+    if not db.debit(uid,cost):return f'💰 پول کم است؛ لازم: {texts.money(p["country"],cost)}'
+    dur=(have*(row['dur'] if row else 100)+qty*100)//(have+qty)
+    db.ex('INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,?,?) ON CONFLICT(uid,iid) DO UPDATE SET qty=excluded.qty,dur=excluded.dur',(uid,iid,have+qty,dur))
+    quests.on_event(uid,'خرید')
+    db.audit('equipment_purchase',uid,item=iid,qty=qty,cost=cost)
+    return f'🛒 {it[1]} {it[0]} ×{qty} خریداری شد؛ موجودی {have+qty}، سلامت میانگین {dur}٪.\n💰 هزینه: {texts.money(p["country"],cost)}'
 
 
 def black_sample(uid) -> list:
-    """نمونه‌ی ساعتی بازار سیاه — همین لیست در متن و دکمه‌ها."""
-    p = state.active(uid)
-    if not p:
-        return []
-    import random as _r
-    _r.seed(db.now() // 3600 + uid)      # هر ساعت تغییر
-    foreign = [iid for iid, it in countries.ITEMS.items()
-               if it[2] != p["country"]]
-    return _r.sample(foreign, k=min(8, len(foreign)))
+    p=state.active(uid)
+    if not p:return []
+    rng=random.Random(f'{db.GAME.get()}:{db.now()//3600}:{uid}')
+    foreign=[iid for iid,it in countries.ITEMS.items() if it[2]!=p['country']]
+    return rng.sample(foreign,k=min(8,len(foreign)))
 
 
 def blackmarket(uid) -> str:
@@ -219,23 +198,20 @@ def blackmarket(uid) -> str:
     return "\n".join(lines)
 
 
-def buy_black(uid, iid: str) -> str:
-    from game import economy
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    it = countries.ITEMS.get(iid)
-    if not it or it[2] == p["country"]:
-        return "⛔ این تجهیز در بازار سیاه نیست (یا مال کشور خودت است — زرادخانه)"
-    if db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
-        return "✅ از قبل داری."
-    price = int(economy.real_price(it[5]) * 1.7)
-    if p["money"] < price:
-        return (f"💰 پول کم — لازم: {texts.money(p['country'], price)} · "
-                f"داری: {texts.money(p['country'], p['money'])}")
-    db.ex("UPDATE users SET money=money-? WHERE uid=?", (price, uid))
-    db.ex("INSERT OR REPLACE INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100)", (uid, iid))
-    return f"☠ {it[0]} {it[1]} قاچاق شد — دوام ۱۰۰٪"
+@db.atomic
+def buy_black(uid,iid):
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    if iid not in black_sample(uid):return '⏳ این تجهیز در عرضهٔ همین ساعت نیست؛ منو را تازه کن.'
+    if db.one('SELECT 1 FROM inventory WHERE uid=? AND iid=? AND qty>0',(uid,iid)):return '✅ از قبل داری.'
+    it=countries.ITEMS[iid]
+    from game import infra
+    if not infra.power_ok(p['country']) and it[5]>=3000:return '⚡ بازار سیاه هم محدودیت برق تجهیزات سنگین را دور نمی‌زند.'
+    cost=it[5]*17//10
+    if not db.debit(uid,cost):return f'💰 پول کافی نیست؛ {texts.money(p["country"],cost)} لازم است.'
+    db.ex('INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100) ON CONFLICT(uid,iid) DO UPDATE SET qty=1,dur=100',(uid,iid))
+    db.audit('black_market_purchase',uid,item=iid,cost=cost)
+    return f'☠ {it[0]} خریداری شد؛ سلامت ۱۰۰٪.'
 
 
 def item_level(uid, iid: str) -> int:
@@ -247,6 +223,7 @@ def _lvl_mult(uid, iid: str) -> int:
     return 100 + 25 * (item_level(uid, iid) - 1)
 
 
+@db.atomic
 def upgrade(uid, iid: str) -> str:
     """ارتقای تجهیز — ۳ سطح، هر سطح +۲۵٪ قدرت."""
     from game import economy
@@ -256,9 +233,12 @@ def upgrade(uid, iid: str) -> str:
     it = countries.ITEMS.get(iid)
     if not it or not db.one("SELECT 1 FROM inventory WHERE uid=? AND iid=?", (uid, iid)):
         return "⛔ این تجهیز را نداری."
+    from game import fleet
+    if fleet.escort_locked(uid,iid):return '⚓ بخشی از این تجهیز در اسکورت دریایی است؛ ارتقا بعد از بازگشت.'
     lvl = item_level(uid, iid)
     if lvl >= 3:
         return "⭐ تجهیز در حداکثر سطح (۳) است."
+    # Shared technology for this item type, including later-produced units.
     cost = int(economy.real_price(it[5]) * 0.6 * lvl)
     if p["money"] < cost:
         return (f"💰 ارتقا {texts.money(p['country'], cost)} می‌ارزد — "
@@ -274,27 +254,32 @@ def upgrade(uid, iid: str) -> str:
         t.row("هزینه", f"💰 {t.money(p['country'], cost)}")])
 
 
+@db.atomic
 def repair(uid) -> str:
     """تعمیر همه‌ی تجهیزات خراب — هزینه‌ی واقعی."""
     p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
     from game import economy
-    rows = db.q("SELECT i.iid, i.dur FROM inventory i WHERE i.uid=? AND i.dur<100", (uid,))
+    rows = db.q("SELECT i.iid, i.dur, i.qty FROM inventory i WHERE i.uid=? AND i.dur<100", (uid,))
     if not rows:
         return "🔧 همه‌ی تجهیزات سالم‌اند."
-    total, fixed = 0, 0
+    total, fixed, locked = 0, 0, 0
     for r in rows:
+        from game import fleet
+        if fleet.escort_locked(uid,r["iid"]):
+            locked+=1;continue
         it = countries.ITEMS.get(r["iid"])
         if not it:
             continue
         # هزینه‌ی تعمیر متناسب با قیمت واقعی تجهیز
-        cost = max(10, economy.real_price(it[5]) * (100 - r["dur"]) // 100)
+        cost = max(10, economy.real_price(it[5]) * r["qty"] * (100 - r["dur"]) // 100)
         if p["money"] < total + cost:
             break
         total += cost
         fixed += 1
         db.ex("UPDATE inventory SET dur=100 WHERE uid=? AND iid=?", (uid, r["iid"]))
+    if total == 0 and locked==len(rows):return "⚓ تجهیزات خراب در اسکورت هستند؛ پس از بازگشت تعمیر کن."
     if total == 0:
         return "💰 پول تعمیر کافی نیست — جیره‌ی روزانه‌ات را بگیر (منو)."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (total, uid))
@@ -307,93 +292,37 @@ def repair(uid) -> str:
 
 
 def loadout(uid):
-    """بهترین تجهیز تهاجمی + دفاعی بازیکن → (atk_item, def_item, atk, guard, a_iid, d_iid)."""
-    rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=? AND n.dur>10", (uid,))
-    if not rows:
-        return None, None, 0, 0, None, None
-    best_a = max(rows, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
-                 * _lvl_mult(uid, r["iid"]) // 100)
-    best_d = max(rows, key=lambda r: countries.ITEMS[r["iid"]][4] * r["dur"] // 100
-                 * _lvl_mult(uid, r["iid"]) // 100)
-    a = countries.ITEMS[best_a["iid"]]
-    d = countries.ITEMS[best_d["iid"]]
-    return a, d, (a[3] * best_a["dur"] // 100) * _lvl_mult(uid, best_a["iid"]) // 100, \
-        (d[4] * best_d["dur"] // 100) * _lvl_mult(uid, best_d["iid"]) // 100, \
-        best_a["iid"], best_d["iid"]
+    from game import fleet
+    rows=[r for r in db.q('SELECT iid,dur,qty FROM inventory WHERE uid=? AND qty>0 AND dur>10',(uid,)) if r['iid'] in countries.ITEMS and r['qty']>fleet.escort_locked(uid,r['iid'])]
+    if not rows:return None,None,0,0,None,None
+    a=max(rows,key=lambda r:countries.ITEMS[r['iid']][3]*r['dur']*_lvl_mult(uid,r['iid']))
+    d=max(rows,key=lambda r:countries.ITEMS[r['iid']][4]*r['dur']*_lvl_mult(uid,r['iid']))
+    ai,di=countries.ITEMS[a['iid']],countries.ITEMS[d['iid']]
+    return ai,di,int(ai[3]*a['dur']/100*_lvl_mult(uid,a['iid'])/100),int(di[4]*d['dur']/100*_lvl_mult(uid,d['iid'])/100),a['iid'],d['iid']
 
 
 # ═══════════ رزم ═══════════
 
-ENEMIES = [("گروه شبه‌نظامی", 70, 12), ("گروه شناسایی دشمن", 105, 16),
-           ("کاروان زرهی", 160, 23), ("پایگاه مرزی", 230, 30),
-           ("نیروی ویژه دشمن", 320, 39), ("تکاوران گارد ویژه", 410, 48),
-           ("لشکر مکانیزه", 530, 58), ("ستاد فرماندهی دشمن", 690, 69)]
+
+@db.atomic
+def battle(uid,tier=None):
+    """Retained combat button becomes a drill; no NPC opponent or fictional loot."""
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    if p['branch'] in (None,''):return '🪖 ابتدا عضو شاخهٔ نظامی شو.'
+    if tier is not None and (type(tier) is not int or not 0<=tier<=7):return '⛔ تمرین نامعتبر.'
+    if db.now()-db.integer(db.kv_get(f'drill:{uid}'))<3600:return '⏳ هر ساعت یک تمرین سازمانی.'
+    a,d,atk,guard,ai,di=loadout(uid)
+    if not ai:return '🛒 دست‌کم یک تجهیز سالم لازم است.'
+    db.kv_set(f'drill:{uid}',db.now())
+    for iid in set(i for i in (ai,di) if i):db.ex('UPDATE inventory SET dur=MAX(0,dur-2) WHERE uid=? AND iid=?',(uid,iid))
+    state.gain_xp(uid,25)
+    from game import quests
+    quests.on_event(uid,'تمرین')
+    return '🎯 تمرین سازمانی کامل شد: ۲۵ تجربه؛ بدون پول، کشتار یا دشمن NPC.\nبرای نبرد واقعی، جنگ یا چالش یک بازیکن را انتخاب کن.'
 
 
-def battle(uid, tier: int = None) -> str:
-    """نبرد خودکار با گزارش کوتاه — تجهیزات واقعی دوام می‌بازند."""
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    if not p["branch"]:
-        return "🪖 اول عضو شاخه شو — منو → عضویت نظامی"
-    if db.now() - int(db.kv_get(f"battle:{uid}", "0")) < 20:
-        return "⏳ ۲۰ ثانیه بین نبردها صبر کن."
-    db.kv_set(f"battle:{uid}", str(db.now()))
-    tier = tier if tier is not None else random.randint(0, min(4, p["level"]))
-    name, ehp, eatk = ENEMIES[tier]
-    a, d, atk, guard, a_iid, d_iid = loadout(uid)
-    wpn = a[0] if a else "تفنگ سبک"
-    # 🎖 تخصص کشور در رزم
-    mspec, mpct, mname = countries.spec_of(p["country"])
-    spec_mult = 1 + mpct / 200          # نصف اثر در رزم
-    log = []
-    turn = 0
-    while turn < 14 and ehp > 0 and p["hp"] > 0:
-        turn += 1
-        dmg = max(4, int((atk + 10 + p["level"] * 3) * spec_mult
-                         * random.uniform(0.7, 1.3)))
-        crit = random.random() < 0.15   # 🎯 شلیک مرگبار
-        if crit:
-            dmg *= 2
-        ehp -= dmg
-        log.append(f"{'🎯 مرگبار! ' if crit else '⚔️ '}{wpn} → −{texts.fa(dmg)}")
-        if ehp <= 0:
-            break
-        edmg = max(3, int(eatk * random.uniform(0.6, 1.1)) - guard // 2)
-        db.ex("UPDATE users SET hp=MAX(0,hp-?) WHERE uid=?", (edmg, uid))
-        p = state.active(uid)
-        log.append(f"🩸 ضدحمله → −{texts.fa(edmg)}")
-    # فرسایش دوام تجهیزات استفاده‌شده — سلاح و سپر، هر دو
-    for iid in (a_iid, d_iid):
-        if iid:
-            db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
-                  (random.randint(4, 10), uid, iid))
-    t = texts
-    if ehp <= 0:
-        loot = (tier + 1) * 160
-        xp = 60 + tier * 40
-        db.ex("UPDATE users SET money=money+?, kills=kills+1, hp=MAX(20,hp) WHERE uid=?",
-              (loot, uid))
-        state.gain_xp(uid, xp)
-        from game import quests
-        quests.on_event(uid, "رزم")
-        quests.on_event(uid, "پیروزی")
-        return "\n".join([
-            t.hdr("پیروزی در رزم", "🏆"),
-            t.row("دشمن", name),
-            t.row("تخصص", f"🎖 {mname}"), "",
-            *log[:6], "",
-            t.row("غنیمت", f"💰 {t.money(p['country'], loot)} · ⭐ {t.fa(xp)} XP"),
-            t.row("جان", f"❤️ {p['hp']}/{p['max_hp']}")])
-    db.ex("UPDATE users SET hp=MAX(10,hp) WHERE uid=?", (uid,))
-    return "\n".join([
-        t.hdr("عقب‌نشینی", "💨"),
-        t.row("دشمن", name), "",
-        *log[:6], "",
-        "💨 جان کم آمد — از منو: 🏥 استراحت یا 🔧 تعمیر."])
-
-
+@db.atomic
 def rest(uid) -> str:
     p = state.active(uid)
     if not p:
@@ -407,3 +336,32 @@ def rest(uid) -> str:
     db.ex("UPDATE users SET hp=max_hp, money=money-? WHERE uid=?", (cost, uid))
     return (f"🏥 جان کامل شد: ❤️ {texts.fa(p['max_hp'])}/{texts.fa(p['max_hp'])}\n"
             f"هزینه: {texts.money(p['country'], cost)}")
+
+
+@db.atomic
+def retire_offer(uid,iid,qty=1):
+    """Optional disposal of personal equipment, with a scoped single-use confirmation."""
+    import secrets,json
+    from game import fleet
+    p=state.active(uid)
+    if not p:return '⛔ ابتدا کشور انتخاب کن.',None
+    if iid not in countries.ITEMS or type(qty) is not int or not 1<=qty<=9:return '⛔ تجهیز یا تعداد نامعتبر.',None
+    inv=db.one('SELECT qty FROM inventory WHERE uid=? AND iid=?',(uid,iid))
+    if not inv or inv['qty']-fleet.escort_locked(uid,iid)<qty:return '⚓ تجهیز آزاد کافی نیست؛ اسکورتِ در سفر قابل حذف نیست.',None
+    nonce=secrets.token_hex(6)
+    db.kv_set(f'retire:{uid}',json.dumps({'nonce':nonce,'iid':iid,'qty':qty,'country':p['country'],'expires':db.now()+300}))
+    return f'⚠️ تأیید حذف از زرادخانه: {countries.ITEMS[iid][0]} ×{qty}\nاین کار پولی نمی‌دهد و تجهیز حذف‌شده بازنمی‌گردد؛ فقط برای آزادکردن جاست.\nتأیید تا پنج دقیقه و فقط یک بار معتبر است.',nonce
+
+
+@db.atomic
+def retire_confirm(uid,nonce):
+    from game import fleet
+    p=state.active(uid);key=f'retire:{uid}';pending=db.jload(db.kv_get(key),{}) or {}
+    if not p or not isinstance(nonce,str) or pending.get('nonce')!=nonce or pending.get('expires',0)<db.now() or pending.get('country')!=p['country']:
+        return '⛔ تأیید حذف نامعتبر، منقضی یا قبلاً استفاده شده است؛ چیزی حذف نشد.'
+    iid=pending['iid'];qty=pending['qty']
+    inv=db.one('SELECT qty FROM inventory WHERE uid=? AND iid=?',(uid,iid))
+    if not inv or inv['qty']-fleet.escort_locked(uid,iid)<qty:return '⚓ موجودی آزاد تغییر کرده است؛ چیزی حذف نشد.'
+    db.ex('UPDATE inventory SET qty=qty-? WHERE uid=? AND iid=?',(qty,uid,iid))
+    db.kv_del(key);db.audit('equipment_retired',uid,item=iid,qty=qty)
+    return f'🗑 {countries.ITEMS[iid][0]} ×{qty} با تأیید خودت حذف شد. پولی پرداخت نشد؛ اکنون می‌توانی هدیهٔ ذخیره‌شده را دریافت کنی.'

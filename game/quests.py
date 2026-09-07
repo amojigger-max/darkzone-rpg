@@ -5,8 +5,8 @@ import db
 import texts
 
 POOL = [
-    ("رزم", 3, "⚔️ سه نبرد رزمی انجام بده", 400),
-    ("پیروزی", 2, "🏆 دو پیروزی رزمی بگیر", 500),
+    ("تمرین", 1, "🎯 یک تمرین سازمانی بدون NPC", 200),
+    ("کار", 2, "🔨 دو شیفت کاری انجام بده", 250),
     ("جیره", 1, "🍞 جیره‌ی روزانه را بگیر", 200),
     ("جاسوسی", 1, "🕵 یک عملیات جاسوسی انجام بده", 450),
     ("خرید", 1, "🛒 یک تجهیز بخر", 300),
@@ -15,6 +15,7 @@ POOL = [
 ]
 
 
+@db.atomic
 def quest_state(uid) -> dict:
     day = db.day_index()
     st = db.jload(db.kv_get(f"quest:{uid}"), None) or {}
@@ -27,6 +28,7 @@ def quest_state(uid) -> dict:
     return st
 
 
+@db.atomic
 def on_event(uid, key: str):
     """قلاب پیشرفت: از رزم/جاسوسی/خرید/جیره صدا زده می‌شود."""
     st = quest_state(uid)
@@ -59,6 +61,7 @@ def view(uid) -> str:
 FA = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 
+@db.atomic
 def claim(uid) -> str:
     st = quest_state(uid)
     from game import state
