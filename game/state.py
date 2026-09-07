@@ -158,8 +158,10 @@ def ration(uid) -> str:
     t = texts
     from game import military as _mil2
     from game import infra as _ifr2
+    from game import welfare as _wl2
     amount = int((200 + min(7, streak) * 60) * _mil2.eco_mult(uid)
-                 * _ifr2.output_mult(p["country"]))  # ⚙️ لجستیک + 🏗 زیرساخت
+                 * _ifr2.output_mult(p["country"])
+                 * _wl2.welfare_mult(p["country"]))  # ⚙️ + 🏗 + 😊
     tax_note = ""
     col = geo_colony(p["country"])
     if col:                                    # ⛓ زیر یوغ مستعمره
@@ -255,8 +257,9 @@ def work(uid) -> str:
     db.kv_set(f"work:{uid}", str(db.now()))
     from game import military as _mil
     from game import infra as _ifr
+    from game import welfare as _wl
     pay = int((120 + p["level"] * 10) * _mil.eco_mult(uid)
-              * _ifr.output_mult(p["country"]))
+              * _ifr.output_mult(p["country"]) * _wl.welfare_mult(p["country"]))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
     wl = [
         t.hdr("شیفت کاری تمام شد", "🔨"),

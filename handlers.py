@@ -13,7 +13,7 @@ import config
 import countries
 import db
 import texts
-from game import ai, defense, economy, events, geo, guide, infra, invest, military, politics, quests, state, war
+from game import ai, defense, economy, events, geo, guide, infra, invest, military, politics, quests, state, toll, war, welfare
 
 router = Router()
 
@@ -71,6 +71,7 @@ TEXT_ALLOWED = {
     "دستورها", "دستور", "دستورات", "کمک",                 # فهرست دستورها
     "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی",           # سرمایه‌گذاری
     "زیرساخت", "انقلاب", "شورش",                          # زیرساخت + انقلاب
+    "رفاه", "عوارض",                                       # رفاه + تنگه
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -349,6 +350,8 @@ def kb_main(uid=None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💸 انتقال پول", callback_data="pay:"),
          InlineKeyboardButton(text="⚡ رویدادها", callback_data="mn:events")],
         [InlineKeyboardButton(text="🏭 سرمایه‌گذاری", callback_data="inv:"),
+         InlineKeyboardButton(text="🏘 رفاه مردم", callback_data="mn:welf")],
+        [InlineKeyboardButton(text="🛃 عوارض تنگه", callback_data="toll:"),
          InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
     if uid == config.OWNER_ID:
         rows.append([InlineKeyboardButton(text="🛠 مدیریت", callback_data="ad:stats")])
@@ -485,6 +488,40 @@ def kb_def() -> InlineKeyboardMarkup:
                      InlineKeyboardButton(text=f"➕ {L[b]}", callback_data=f"df:{b}")])
     rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
                  InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_welfare(uid) -> InlineKeyboardMarkup:
+    """🏘 رفاه — ساخت مسجد/کلیسا/معبد/بیمارستان/مسکن."""
+    from game import state as _st
+    rows = []
+    p = _st.active(uid)
+    if p:
+        nd = welfare.needs(p["country"])
+        for k in nd:
+            rows.append([InlineKeyboardButton(
+                text=f"🏗 ساخت {welfare.NAME[k]} — {texts.fa(welfare.PRICE[k])} دلار",
+                callback_data=f"wbuild:{k}")])
+    rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_toll(uid) -> InlineKeyboardMarkup:
+    """🛃 عوارض تنگه — پرداخت / مدیریت ایران."""
+    from game import state as _st
+    rows = []
+    p = _st.active(uid)
+    if p and toll.is_on() and p["country"] != "ir":
+        rows.append([InlineKeyboardButton(text="💵 پرداخت عوارض امروز",
+                                          callback_data="tollpay:")])
+    if p and p["country"] == "ir":
+        rows.append([InlineKeyboardButton(
+            text=("🛃 خاموش کردن عوارض" if toll.is_on()
+                  else "🛃 روشن کردن عوارض"),
+            callback_data="tolltog:")])
+        rows.append([InlineKeyboardButton(text="🏦 برداشت صندوق",
+                                          callback_data="tollget:")])
+    rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -817,7 +854,7 @@ _SLASH_MAP = {
     "attack": "حمله", "war": "جنگ", "fight": "حمله",
     "trade": "تجارت", "profile": "پروفایل", "me": "پروفایل", "world": "جهان",
     "invest": "سرمایه", "mine": "معدن", "infra": "زیرساخت",
-    "revolt": "انقلاب",
+    "revolt": "انقلاب", "welfare": "رفاه", "toll": "عوارض",
 }
 
 
@@ -939,6 +976,8 @@ async def cb_menu(c: CallbackQuery):
     elif what == "infra":
         await _edit(c, infra.view(uid) + "\n\n" + infra.buildings_view(uid),
                     kb_infra(uid))
+    elif what == "welf":
+        await _edit(c, welfare.view(uid), kb_welfare(uid))
     elif what == "pol":
         await _edit(c, texts.hdr("دفتر سیاسی", "🏛") + "\n\nیکی را انتخاب کن:", kb_pol())
     elif what == "world":
@@ -1115,6 +1154,39 @@ async def cb_revolt(c: CallbackQuery):
     await c.answer()
 
 
+@router.callback_query(F.data.startswith("wbuild:"))
+async def cb_welfare_build(c: CallbackQuery):
+    """🏗 ساخت اماکن رفاه."""
+    await _edit(c, welfare.build(c.from_user.id, c.data.split(":", 1)[1]),
+                kb_welfare(c.from_user.id))
+    await _send_bbc(c.message.chat.id)
+
+
+@router.callback_query(F.data == "toll:")
+async def cb_toll(c: CallbackQuery):
+    """🛃 وضعیت عوارض تنگه."""
+    await _edit(c, toll.status(c.from_user.id), kb_toll(c.from_user.id))
+
+
+@router.callback_query(F.data == "tollpay:")
+async def cb_toll_pay(c: CallbackQuery):
+    await _edit(c, toll.pay(c.from_user.id), kb_toll(c.from_user.id))
+
+
+@router.callback_query(F.data == "tolltog:")
+async def cb_toll_toggle(c: CallbackQuery):
+    msg, ann = toll.toggle(c.from_user.id)
+    await _edit(c, msg, kb_toll(c.from_user.id))
+    if ann:
+        with contextlib.suppress(Exception):
+            await c.message.answer(texts.fx(ann), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "tollget:")
+async def cb_toll_get(c: CallbackQuery):
+    await _edit(c, toll.collect(c.from_user.id), kb_toll(c.from_user.id))
+
+
 @router.callback_query(F.data.startswith("ibld:"))
 async def cb_infra_build(c: CallbackQuery):
     """🏗 ساخت ساختمان ملی."""
@@ -1207,6 +1279,14 @@ async def cb_ally(c: CallbackQuery):
     kb = kb_ally_accept(p["country"]) if ("ارسال شد" in msg and p) else kb_pol()
     await c.message.edit_text(msg, parse_mode="HTML", reply_markup=kb)
     await c.answer()
+
+
+async def _send_bbc(chat_id):
+    """📡 خبر فوری معلق را با ایموجی جنگی بفرست."""
+    bbc = war.bbc_pop()
+    if bbc and bot:
+        with contextlib.suppress(Exception):
+            await bot.send_message(chat_id, texts.fx(bbc), parse_mode="HTML")
 
 
 async def _delayed_missile(chat_id, uid):
@@ -1549,6 +1629,14 @@ def _v_revolt(uid):
     return politics.revolt_view(uid), kb_revolt(uid)
 
 
+def _v_welf(uid):
+    return welfare.view(uid), kb_welfare(uid)
+
+
+def _v_toll(uid):
+    return toll.status(uid), kb_toll(uid)
+
+
 # ⌨️ روال دستورها: هر کار یک نام اصلی + نام‌های رایج — همه به یک نتیجه
 WORD_VIEWS = {
     "تجارت": _v_trade, "پروفایل": _v_me, "نظامی": _v_mil,
@@ -1557,6 +1645,7 @@ WORD_VIEWS = {
     "خرید": _v_ars, "زرادخانه": _v_ars, "تجهیزات": _v_ars,
     "سرمایه": _v_inv, "سرمایه‌گذاری": _v_inv, "معدن": _v_inv, "دارایی": _v_inv,
     "زیرساخت": _v_infra, "انقلاب": _v_revolt, "شورش": _v_revolt,
+    "رفاه": _v_welf, "عوارض": _v_toll,
 }
 
 
@@ -1698,6 +1787,38 @@ async def fa_words(m: Message):
         sent = await m.answer(texts.HELP_PAGES[0], parse_mode="HTML",
                               reply_markup=kb_help(1))
         _own(m, sent, uid)
+        return sent
+    # 🛃 جریمه‌ی روزانه‌ی عوارض — ساکت، دقیق، یک‌بار در روز
+    if m.chat.type != "private":
+        with contextlib.suppress(Exception):
+            toll.enforce(uid)
+        # 🔥 شورش خودکارِ رضایت پایین — یک‌بار در روز، با خبر
+        _pp = state.active(uid)
+        if _pp:
+            with contextlib.suppress(Exception):
+                _up = welfare.check_uprising(_pp["country"])
+                if _up and not TEST_MODE and bot:
+                    await bot.send_message(m.chat.id, texts.fx(_up),
+                                           parse_mode="HTML")
+    # 🛃 ابزار رهبر ایران: عوارض روشن/خاموش/برداشت — با اعلام عمومی
+    if w == "عوارض" and arg:
+        p_t = state.active(uid)
+        if not p_t or p_t["country"] != "ir":
+            return await m.answer("🇮🇷 فقط رهبر ایران عوارض را مدیریت می‌کند.",
+                                  parse_mode="HTML")
+        if arg in ("روشن", "فعال"):
+            msg, ann = toll.toggle(uid)
+        elif arg in ("خاموش", "بستن"):
+            msg, ann = toll.toggle(uid)
+        elif arg == "برداشت":
+            msg, ann = toll.collect(uid), ""
+        else:
+            msg, ann = toll.status(uid), ""
+        sent = await m.answer(msg, parse_mode="HTML", reply_markup=kb_toll(uid))
+        _own(m, sent, uid)
+        if ann:
+            with contextlib.suppress(Exception):
+                await m.answer(texts.fx(ann), parse_mode="HTML")
         return sent
     # 🎛 گروه تمیز: هر متن دیگری نادیده — همه‌چیز از «منو»
     if not TEST_MODE and w not in TEXT_ALLOWED:

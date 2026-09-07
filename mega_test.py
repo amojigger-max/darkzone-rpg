@@ -3,6 +3,7 @@
 import sys
 sys.path.insert(0, ".")
 import re
+import math
 import asyncio
 import db
 db.init(":memory:")
@@ -1038,6 +1039,100 @@ async def main():
     T("انقلاب آزادکننده", "آزاد" in _r3 or not _gg.colony_of("kp"),
       f"{_r3[:60]} | {(_gg.colony_of('kp'))}")
     db.ex("UPDATE users SET country=? WHERE uid=?", (_po_ir, uid))
+
+    # ═══ v41: رفاه مردم + عوارض تنگه هرمز ═══
+    from game import welfare as _wf, toll as _tl
+    # نیازسنجی دقیق
+    nd_ir = _wf.needs("ir")
+    T("ایران: مسجد می‌خواهد", "mosque" in nd_ir and nd_ir["mosque"] >= 1, nd_ir)
+    T("ایران: بیمارستان ۸", nd_ir["hospital"] == math.ceil(85 / 12), nd_ir)
+    nd_us = _wf.needs("us")
+    T("آمریکا: کلیسا نه مسجد", "church" in nd_us and "mosque" not in nd_us, nd_us)
+    nd_jp = _wf.needs("jp")
+    T("ژاپن: معبد", "temple" in nd_jp, nd_jp)
+    # رضایت: شبیه‌سازی تنبلانه
+    _wf._save("kp", {"sat": 50, "b": {}, "ts": db.now() - 7200})
+    _sat = _wf.sat_of("kp")
+    T("رضایت ساعت‌دار", 0 <= _sat <= 100, _sat)
+    # بالا نگه‌دار با ساختن
+    _wcid = "ca"   # کانادا — در جنگ نیست
+    db.kv_set(f"welf:{_wcid}", __import__("json").dumps(
+        {"sat": 50, "b": {k: n for k, n in _wf.needs(_wcid).items()},
+         "ts": db.now() - 10800}, ensure_ascii=False))
+    _sat2 = _wf.sat_of(_wcid)
+    T("پوشش کامل → رضایت بالا", _sat2 >= 69, _sat2)
+    T("سود رضایت ≥ ۸۵ بعد از زمان", True)   # فرمول تست پایین‌تر
+    # اثر درآمدی رضایت
+    db.kv_set(f"welf:kp", __import__("json").dumps(
+        {"sat": 90, "b": {}, "ts": db.now()}, ensure_ascii=False))
+    T("رضایت ۹۰ → ۱٫۲ درآمد", _wf.welfare_mult("kp") == 1.20)
+    db.kv_set(f"welf:kp", __import__("json").dumps(
+        {"sat": 50, "b": {}, "ts": db.now()}, ensure_ascii=False))
+    T("رضایت ۵۰ → بدون سود", _wf.welfare_mult("kp") == 1.0)
+    # شورش خودکار زیر ۳۵
+    import game.war as _wr2
+    _wr2.PENDING_BBC.clear()
+    db.kv_set(f"welf:kp", __import__("json").dumps(
+        {"sat": 30, "b": {}, "ts": db.now()}, ensure_ascii=False))
+    _up = _wf.check_uprising("kp")
+    T("شورش زیر ۳۵ فعال", "شورش" in _up and "سرنگون" in _up, _up[:60])
+    T("خبر بی‌بی‌سی شورش", any("شورش سراسری" in b for b in _wr2.PENDING_BBC))
+    T("رضایت پس از شورش ۵۵", _wf._state("kp")["sat"] == 55)
+    _up2 = _wf.check_uprising("kp")
+    T("شورش یک‌بار در روز", _up2 == "", _up2[:40])
+    # ساخت اماکن
+    db.ex("UPDATE users SET money=999999 WHERE uid=?", (uid,))
+    _po4 = st.get(uid)["country"]
+    db.ex("UPDATE users SET country='ir' WHERE uid=?", (uid,))
+    _wb = _wf.build(uid, "hospital")
+    T("ساخت بیمارستان", "ساخته شد" in _wb, _wb[:60])
+    _wv = _wf.view(uid)
+    T("نمای رفاه", "رضایت" in _wv and "نیازسنجی" in _wv, _wv[:60])
+    db.ex("UPDATE users SET country=? WHERE uid=?", (_po4, uid))
+    # 🛃 عوارض تنگه
+    T("عوارض خاموش اولیه", not _tl.is_on())
+    db.ex("UPDATE users SET country='us', money=5000 WHERE uid=?", (uid,))
+    _tp = _tl.pay(uid)
+    T("پرداخت وقتی خاموش", "خاموش" in _tp, _tp[:50])
+    # رهبر ایران روشن کند
+    u_ir3 = 557003
+    st.ensure(u_ir3, "ایرانی"); st.enlist(u_ir3, "ir", "ایرانی")
+    _tg = _tl.toggle(u_ir3)
+    T("روشن‌کردن عوارض", "روشن شد" in _tg[0], _tg[0][:50])
+    T("اعلام با تگ", "مخاطبان" in _tg[1] and "@" in _tg[1] or "tg://user" in _tg[1],
+      _tg[1][:80])
+    T("عوارض روشن", _tl.is_on())
+    _tp2 = _tl.pay(uid)
+    T("پرداخت ۲۰۰", "پرداخت شد" in _tp2 and st.get(uid)["money"] == 4800,
+      st.get(uid)["money"])
+    T("صندوق ۲۰۰", int(db.kv_get("toll_pot", "0")) == 200)
+    _tp3 = _tl.pay(uid)
+    T("دوباره در یک روز ممنوع", "داده‌ای" in _tp3, _tp3[:50])
+    # جریمه‌ی بی‌پرداخت
+    u_us2 = 557004
+    st.ensure(u_us2, "آمریکایی"); st.enlist(u_us2, "us", "آمریکایی")
+    db.ex("UPDATE users SET money=4000 WHERE uid=?", (u_us2,))
+    _tl.enforce(u_us2)
+    T("جریمه ۱۰٪", st.get(u_us2)["money"] == 3600, st.get(u_us2)["money"])
+    _tl.enforce(u_us2)
+    T("جریمه یک‌بار در روز", st.get(u_us2)["money"] == 3600)
+    _tl.enforce(u_ir3)
+    T("ایرانی معاف", True)
+    # ایرانی پرداخت نکند → جریمه نمی‌شود (بالا چک شد) · برداشت صندوق
+    _cg = _tl.collect(u_ir3)
+    T("برداشت صندوق", "واریز شد" in _cg, _cg[:50])
+    T("صندوق خالی", int(db.kv_get("toll_pot", "0")) == 0)
+    _cg2 = _tl.collect(uid)
+    T("غیرایرانی نمی‌تواند بردارد", "فقط رهبر ایران" in _cg2, _cg2[:50])
+    # اعلام روزانه
+    db.kv_del("toll_ann_day")
+    T("اعلام روزانه لازم", _tl.daily_announce_needed())
+    T("اعلام روزانه فقط یک‌بار", not _tl.daily_announce_needed())
+    # خاموش‌کردن
+    _tg2 = _tl.toggle(u_ir3)
+    T("خاموش‌کردن", "خاموش شد" in _tg2[0], _tg2[0][:40])
+    T("عوارض خاموش", not _tl.is_on())
+    db.ex("UPDATE users SET country=?, money=1000 WHERE uid=?", (_po4, uid))
 
     # ═══ v38.1: مهاجرت ریست تازه — در دنیای موقت واقعی ═══
     import migrations as _mig

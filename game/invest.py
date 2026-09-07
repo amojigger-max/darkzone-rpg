@@ -103,7 +103,9 @@ def collect(uid) -> str:
         left = 60 - (db.now() - last) // 60
         return f"⏳ هنوز ساعت کامل نشده — {texts.fa(left)} دقیقه دیگر بیا."
     from game import infra as _ifr
-    pay = int(rt * hours * _ifr.output_mult(p["country"]))
+    from game import welfare as _wl
+    pay = int(rt * hours * _ifr.output_mult(p["country"])
+              * _wl.welfare_mult(p["country"]))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
     db.kv_set(f"invt:{uid}", str(last + hours * 3600))   # دقیقه‌های ناقص حفظ
     return "\n".join([

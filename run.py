@@ -52,6 +52,13 @@ async def world_loop(bot: Bot):
                 db.GAME.set(g)
                 if not events.game_alive(g):
                     continue                     # گروه خفته — جهانش هم می‌خوابد
+                # 🛃 اعلام روزانه‌ی عوارض تنگه — با تگ همه، فقط یک بار در روز
+                from game import toll as _toll
+                with contextlib.suppress(Exception):
+                    if _toll.daily_announce_needed():
+                        import texts as _tx
+                        await bot.send_message(g, _tx.fx(_toll.announce_text()),
+                                               parse_mode="HTML")
                 w = economy.tick()
                 economy.world()
                 news = _news(w)
