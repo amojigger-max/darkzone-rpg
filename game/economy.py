@@ -274,6 +274,11 @@ def trade_buy(uid: int, gid: str, qty: int = 1) -> str:
         return "⛔ اول «شروع»"
     if gid not in GOODS_MAP:
         return "⛔ چنین کالایی نداریم."
+    # 🚢 بندر آسیب‌دیده → واردات متوقف (زیرساخت جنگی)
+    from game import infra as _if
+    if not _if.port_ok(p["country"]):
+        return ("🚢 بندر کشورت خراب است — واردات متوقف شده.\n"
+                "🪖 نظامی → 🏗 زیرساخت کشور → تعمیر بندر")
     qty = max(1, min(5, qty))
     h = holdings(uid)
     held = int(h.get(gid, 0))

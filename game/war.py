@@ -13,7 +13,15 @@ import random
 import db
 import countries
 import texts
-from game import defense, economy, geo, military, state
+from game import defense, economy, geo, infra, military, state
+
+# 📡 خبر فوری بی‌بی‌سی — بعد از هر موج، فرستنده می‌خواند و پاک می‌کند
+PENDING_BBC: list = []
+
+
+def bbc_pop() -> str:
+    """📰 آخرین خبر فوری — برای ارسال جداگانه در گروه."""
+    return PENDING_BBC.pop(0) if PENDING_BBC else ""
 
 
 FA_D = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
@@ -161,7 +169,11 @@ def surrender(uid) -> str:
              f"💰 غرامت هر سرباز: {t.money(cid, -reps)}",
              f"🏆 برندگان: +{t.money(enemy, reps)} هر سرباز",
              "🏚 شهرهای اشغال‌شده دست برنده می‌ماند."]
-    # ⛓ اگر همه‌ی شهرها رفته → مستعمره‌ی رسمی
+    # ⛓ تسلیم = حکومت دست‌نشانده‌ی برنده — تا شورش بعدی
+    geo.colonize(cid, enemy)
+    lines.append(f"⛓ {mc['name']} رسماً <b>دست‌نشانده‌ی {ec['name']}</b> شد — "
+                 "مالیات جیره به برنده می‌رود. تنها راه آزادی: 🔥 شورش!")
+    # ⛓ اگر همه‌ی شهرها هم رفته → مستعمره‌ی کامل
     from game import geo as _g
     occ = _g.occupied(cid)
     if occ and set(occ) >= set(_g.CITIES.get(cid, [])):
@@ -333,6 +345,16 @@ def front(uid) -> str:
     myocc = geo.occupied(cid)
     if myocc:
         lines.append("💀 شهرهای ازدست‌رفته‌ی ما: " + " · ".join(myocc))
+    # 🏗 گزارش زیرساخت — هر دو طرف
+    lines += ["", "🏗 <b>زیرساخت:</b>"]
+    for cc in (cid, ecid):
+        cst = infra.state_of(cc)
+        cc_ = countries.COUNTRIES[cc]
+        lines.append(f"▫️ {cc_['flag']} برق {texts.fa(cst['power'])}٪ · فرودگاه "
+                     f"{texts.fa(cst['airport'])}٪ · بندر {texts.fa(cst['port'])}٪ · "
+                     f"صنعت {texts.fa(cst['industry'])}٪")
+    for ln in infra.limit_notes(cid):
+        lines.append(f"⚠️ محدودیت ما: {ln}")
     return "\n".join(lines)
 
 
@@ -414,7 +436,7 @@ def can_strike_kind(a: str, b: str, kind: str):
     return True, ""
 
 
-def _strike_precheck(uid, kind: str, count: int):
+def _strike_precheck(uid, kind: str, count: int, target: str = None):
     """اعتبارسنجی مشترک همه‌ی حمله‌ها.
 
     برنده: (ctx, None) — کول‌داون، مهمات و کوئست مصرف شده.
@@ -446,7 +468,8 @@ def _strike_precheck(uid, kind: str, count: int):
     from game import quests as _q
     _q.on_event(uid, "حمله")
     db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
-    return {"p": p, "w": w, "count": count, "have": have, "ecid": ecid}, None
+    return {"p": p, "w": w, "count": count, "have": have, "ecid": ecid,
+            "target": target}, None
 
 
 def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
@@ -473,24 +496,45 @@ def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
     shield = military.def_mult(ecid)
     shield_note = (f"\n🛡 سپر وطن دشمن: آسیب −{texts.fa(int((1 - shield) * 100))}٪"
                    if shield < 1 else "")
+    # 🛫 فرودگاه خودی آسیب‌دیده → ضربت هوایی/پهپادی ضعیف‌تر
+    own_air = infra.airport_mult(p["country"])
+    # 🏕 پایگاه نظامی مهاجم + 🛡 پناهگاه مدافع — ساخت‌وساز ملی
+    bld_atk = infra.strike_mult(p["country"])
+    bld_def = infra.damage_in_mult(ecid)
+    tgt_name = None
+    if ctx.get("target") and ctx["target"] in dict((k, n) for k, n, _ in infra.INFRA):
+        tgt_name = dict((k, n) for k, n, _ in infra.INFRA)[ctx["target"]]
+    air_note = ""
+    if own_air < 1 and kind in ("هوایی", "پهپادی"):
+        air_note = "\n🛫 فرودگاه شما خراب است — ضربت ۲۰٪ ضعیف‌تر!"
     t = texts
     lines = [t.hdr(title or f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
                                                    "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
              f"{ec['flag']} {ec['name']} ← {t.fa(count)}× {it[0]} {it[1]}{spec_mark}{role_mark}",
-             f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}{shield_note}",
+             f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}{shield_note}{air_note}",
              t.K]
     score_add = 0
+    infra_hits = []
     for n in range(1, count + 1):
         base_dmg = (it[3] * best["dur"] // 100
                     * military._lvl_mult(uid, best["iid"]) // 100) + p["level"] * 2
-        dmg = max(4, int(base_dmg * spec_mult * role_mult
-                         * random.uniform(0.7, 1.3) * dmg_mult * shield))
+        dmg = max(4, int(base_dmg * spec_mult * role_mult * own_air * bld_atk
+                         * random.uniform(0.7, 1.3) * dmg_mult * shield * bld_def))
         intercepted = random.random() < chance
         if intercepted:
             lines.append(f"▫️ {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")
         else:
             lines.append(f"▫️ {texts.fa(n)}. 💥 برخورد! آسیب {texts.fa(dmg)}")
             score_add += 4
+            # 🎯 حمله‌ی هدفمند → بخش انتخابی؛ وگرنه ۳۰٪ شانس تصادفی
+            if tgt_name and random.random() < 0.50:
+                d = infra.damage(ecid, ctx["target"], random.randint(10, 16))
+                infra_hits.append(f"▫️🎯 {tgt_name} دشمن هدفمند آسیب دید — "
+                                  f"{texts.fa(d['hp'])}٪")
+            elif not tgt_name and random.random() < 0.30:
+                d = infra.random_damage(ecid, random)
+                nm = dict((k, n) for k, n, _ in infra.INFRA)[d["key"]]
+                infra_hits.append(f"▫️ {nm} دشمن آسیب دید — {texts.fa(d['hp'])}٪")
         db.ex("UPDATE inventory SET dur=MAX(0,dur-?) WHERE uid=? AND iid=?",
               (random.randint(6, 14), uid, best["iid"]))
     if score_add:
@@ -523,30 +567,52 @@ def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
     from game import ai
     for ln in ai.respond_to_strike(p["country"], ecid, kind, score_add):
         lines.append(ln)
+    # 🏗 گزارش خرابی زیرساخت دشمن + محدودیت‌های تازه
+    if infra_hits:
+        lines += ["", "🏗 <b>خرابی زیرساخت دشمن:</b>"] + infra_hits
+        for ln in infra.limit_notes(ecid):
+            lines.append(f"⚠️ {ec['name']}: {ln}")
+    # 📡 خبر فوری بی‌بی‌سی — جداگانه در گروه ارسال می‌شود
+    if score_add:
+        mc = countries.COUNTRIES[p["country"]]
+        hits = score_add // 4
+        bbc = [f"📡 <b>خبر فوری — BBC دارک‌زون</b> 🌍",
+               f"Breaking: {mc['flag']} {mc['name']} با موج {kind} "
+               f"{ec['flag']} {ec['name']} را نشانه گرفت — "
+               f"{texts.fa(hits)} برخورد ثبت شد."]
+        if infra_hits:
+            bbc.append("🔨 " + " · ".join(h.replace("▫️ ", "").replace("دشمن ", "")
+                                          for h in infra_hits))
+        city_fell = [l for l in lines if "سقوط کرد" in l]
+        if city_fell:
+            bbc.append("🚩 " + city_fell[0].replace("<b>", "").replace("</b>", ""))
+        bbc.append(f"⏱ وضعیت جبهه: {mc['flag']} در حال درگیری — ادامه دارد…")
+        PENDING_BBC.append("\n".join(bbc))
     return "\n".join(lines)
 
 
-def strike(uid, kind: str, count: int = 1) -> str:
+def strike(uid, kind: str, count: int = 1, target: str = None) -> str:
     """رهبر: حمله‌ی فوری (غیرموشکی) — اعتبارسنجی و حل در یک گام."""
-    ctx, err = _strike_precheck(uid, kind, count)
+    ctx, err = _strike_precheck(uid, kind, count, target)
     if err:
         return err
     return _resolve_wave(uid, kind, ctx)
 
 
-def launch_missile(uid, count: int = 1) -> str:
+def launch_missile(uid, count: int = 1, target: str = None) -> str:
     """پرتاب موج موشکی — برخورد بعد از زمان پرواز.
 
     دشمن در این فاصله فرصت دارد سپر ملی‌اش را تقویت کند؛
     رهگیری با پدافندِ لحظه‌ی برخورد سنجیده می‌شود.
     """
-    ctx, err = _strike_precheck(uid, "موشکی", count)
+    ctx, err = _strike_precheck(uid, "موشکی", count, target)
     if err:
         return err
     p, w = ctx["p"], ctx["w"]
     ecid = ctx["ecid"]
     db.kv_set(f"mstrike:{uid}", json.dumps(
-        {"war": w["id"], "count": ctx["count"], "ts": db.now()}))
+        {"war": w["id"], "count": ctx["count"], "ts": db.now(),
+         "target": ctx.get("target")}))
     ec = countries.COUNTRIES[ecid]
     cur = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
     t = texts
@@ -581,7 +647,8 @@ def resolve_missile(uid) -> str:
     if not have:
         return "⛔ موج موشکی متوقف شد — پرتابگر سالم نداری."
     ctx = {"p": p, "w": w, "count": max(1, min(5, int(d.get("count", 1)))),
-           "have": have, "ecid": _enemy(p["country"], w)}
+           "have": have, "ecid": _enemy(p["country"], w),
+           "target": d.get("target")}
     return _resolve_wave(uid, "موشکی", ctx, title="برخورد موج موشکی")
 
 

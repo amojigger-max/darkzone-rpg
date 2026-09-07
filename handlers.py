@@ -13,7 +13,7 @@ import config
 import countries
 import db
 import texts
-from game import ai, defense, economy, events, geo, guide, invest, military, politics, quests, state, war
+from game import ai, defense, economy, events, geo, guide, infra, invest, military, politics, quests, state, war
 
 router = Router()
 
@@ -70,6 +70,7 @@ TEXT_ALLOWED = {
     "حمله", "نبرد", "خرید", "زرادخانه", "تجهیزات",        # نام‌های رایج
     "دستورها", "دستور", "دستورات", "کمک",                 # فهرست دستورها
     "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی",           # سرمایه‌گذاری
+    "زیرساخت",                                            # زیرساخت جنگی
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -395,23 +396,58 @@ def _howto(uid) -> str:
     return "\n".join(lines)
 
 
+def kb_infra(uid) -> InlineKeyboardMarkup:
+    """🏗 زیرساخت + ساخت‌وساز ملی — تعمیر و ساخت."""
+    rows = []
+    for key, name, price in infra.INFRA:
+        rows.append([InlineKeyboardButton(text=f"🔧 تعمیر {name}",
+                                          callback_data=f"ifix:{key}")])
+    for key, name, price, eff in infra.BUILDINGS:
+        rows.append([InlineKeyboardButton(text=f"🏗 ساخت {name} — {eff}",
+                                          callback_data=f"ibld:{key}")])
+    rows.append([InlineKeyboardButton(text="🪖 فرماندهی نظامی", callback_data="mn:mil"),
+                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_revolt(uid) -> InlineKeyboardMarkup:
+    """🔥 شورش — آغاز یا حمایت."""
+    from game import politics as _po
+    from game import state as _st
+    p = _st.active(uid)
+    rows = []
+    if p:
+        cid = p["country"]
+        if _po._revolt(cid):
+            rows.append([InlineKeyboardButton(text="✊ حمایت از شورش",
+                                              callback_data="rv:x")])
+        else:
+            rows.append([InlineKeyboardButton(text="🔥 شورش را آغاز کن",
+                                              callback_data="rv:go")])
+    rows.append([InlineKeyboardButton(text="🏛 دفتر سیاسی", callback_data="mn:pol"),
+                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def kb_mil() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚔️ رزم", callback_data="mn:battle"),
          InlineKeyboardButton(text="🏥 استراحت", callback_data="mn:rest")],
         [InlineKeyboardButton(text="🛒 تجهیزات", callback_data="mn:arsenal"),
          InlineKeyboardButton(text="🔧 تعمیر", callback_data="mn:repair")],
-        [InlineKeyboardButton(text="🎖 عضویت نظامی", callback_data="mn:branch"),
+        [InlineKeyboardButton(text="🏗 زیرساخت کشور", callback_data="mn:infra"),
          InlineKeyboardButton(text="🍞 جیره", callback_data="mn:ration")],
-        [InlineKeyboardButton(text="🎯 مأموریت روزانه", callback_data="mn:quest"),
-         InlineKeyboardButton(text="☠ بازار سیاه", callback_data="mn:black")],
-        [InlineKeyboardButton(text="⬆️ ارتقای تجهیزات", callback_data="mn:upgrade"),
-         InlineKeyboardButton(text="⚔️ نبرد تن‌به‌تن", callback_data="mn:duel")],
-        [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+        [InlineKeyboardButton(text="🎖 عضویت نظامی", callback_data="mn:branch"),
+         InlineKeyboardButton(text="🎯 مأموریت روزانه", callback_data="mn:quest")],
+        [InlineKeyboardButton(text="☠ بازار سیاه", callback_data="mn:black"),
+         InlineKeyboardButton(text="⬆️ ارتقای تجهیزات", callback_data="mn:upgrade")],
+        [InlineKeyboardButton(text="⚔️ نبرد تن‌به‌تن", callback_data="mn:duel"),
+         InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
 def kb_pol() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔥 انقلاب مردمی — تغییر رژیم", callback_data="rv:")],
         [InlineKeyboardButton(text="🏛 احزاب", callback_data="mn:parties"),
          InlineKeyboardButton(text="🚩 شورش", callback_data="mn:rebel")],
         [InlineKeyboardButton(text="🕵 جاسوسی", callback_data="mn:spy"),
@@ -550,9 +586,41 @@ def kb_strikes(uid=None) -> InlineKeyboardMarkup:
             gno = "land" if kind == "زمینی" else "sea"
             rows.append([InlineKeyboardButton(text=f"🚫 {kind} — {why}",
                                               callback_data=f"gno:{gno}")])
+    rows.append([InlineKeyboardButton(text="🎯 حمله‌ی هدفمند — انتخاب بخش",
+                                      callback_data="aim:")])
     rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
                  InlineKeyboardButton(text="🛡 پدافند", callback_data="mn:def")])
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_aims(uid=None) -> InlineKeyboardMarkup:
+    """🎯 انتخاب بخش زیرساخت دشمن برای حمله‌ی هدفمند."""
+    rows = []
+    for key, name, price in infra.INFRA:
+        rows.append([InlineKeyboardButton(text=f"🎯 {name}",
+                                          callback_data=f"aimk:{key}")])
+    rows.append([InlineKeyboardButton(text="⚔️ حمله‌ی معمولی",
+                                      callback_data="mn:front"),
+                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_aim_kinds(uid, target: str) -> InlineKeyboardMarkup:
+    """🎯 نوع و تعداد حمله به بخش انتخابی."""
+    rows = []
+    p = state.active(uid) if uid else None
+    w = war.war_of(p["country"]) if p else None
+    for kind, emo, cnts in STRIKE_KINDS:
+        ok = True
+        if w:
+            ok, _ = war.can_strike_kind(p["country"], war._enemy(p["country"], w), kind)
+        if ok:
+            rows.append([InlineKeyboardButton(text=f"{emo} {kind} {n}×",
+                                              callback_data=f"st:{kind}:{n}:{target}")
+                         for n in cnts])
+    rows.append([InlineKeyboardButton(text="🎯 تغییر هدف", callback_data="aim:"),
+                 InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -844,6 +912,9 @@ async def cb_menu(c: CallbackQuery):
         await _edit(c, state.card(uid), kb_main())
     elif what == "mil":
         await _edit(c, texts.hdr("فرماندهی نظامی", "🪖") + "\n\nیکی را انتخاب کن:", kb_mil())
+    elif what == "infra":
+        await _edit(c, infra.view(uid) + "\n\n" + infra.buildings_view(uid),
+                    kb_infra(uid))
     elif what == "pol":
         await _edit(c, texts.hdr("دفتر سیاسی", "🏛") + "\n\nیکی را انتخاب کن:", kb_pol())
     elif what == "world":
@@ -980,6 +1051,60 @@ async def cb_menu(c: CallbackQuery):
     await c.answer()
 
 
+@router.callback_query(F.data == "aim:")
+async def cb_aim(c: CallbackQuery):
+    """🎯 انتخاب بخش زیرساخت دشمن."""
+    p = state.active(c.from_user.id)
+    if not p or not war.war_of(p["country"]):
+        return await c.answer("⚔️ اول در جنگ باشی!", show_alert=True)
+    await _edit(c, texts.hdr("حمله‌ی هدفمند", "🎯") +
+                "\n\nکدام بخشِ زیرساخت دشمن را بزنیم؟\n"
+                "🎯 هدفمند = ۵۰٪ شانس آسیب مستقیم ۱۰–۱۶٪ به همان بخش.",
+                kb_aims(c.from_user.id))
+
+
+@router.callback_query(F.data.startswith("aimk:"))
+async def cb_aim_kind(c: CallbackQuery):
+    """🎯 نوع حمله به بخش انتخابی."""
+    tgt = c.data.split(":", 1)[1]
+    await _edit(c, texts.hdr("حمله‌ی هدفمند", "🎯") + "\n\nنوع و تعداد حمله:",
+                kb_aim_kinds(c.from_user.id, tgt))
+
+
+@router.callback_query(F.data.startswith("rv:"))
+async def cb_revolt(c: CallbackQuery):
+    """🔥 شورش — آغاز یا حمایت."""
+    if c.data == "rv:":
+        out = politics.revolt_view(c.from_user.id)
+    elif c.data == "rv:s":
+        out = politics.revolt_view(c.from_user.id)      # فقط دیدن وضعیت
+    elif c.data == "rv:go":
+        out = politics.revolt_start(c.from_user.id)
+    else:
+        out = politics.revolt_support(c.from_user.id)
+    await _edit(c, out, kb_revolt(c.from_user.id))
+    # 📡 خبر شورش موفق
+    bbc = war.bbc_pop()
+    if bbc and not TEST_MODE:
+        with contextlib.suppress(Exception):
+            await c.message.answer(texts.fx(bbc), parse_mode="HTML")
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("ibld:"))
+async def cb_infra_build(c: CallbackQuery):
+    """🏗 ساخت ساختمان ملی."""
+    await _edit(c, infra.build(c.from_user.id, c.data.split(":", 1)[1]),
+                kb_infra(c.from_user.id))
+
+
+@router.callback_query(F.data.startswith("ifix:"))
+async def cb_infra_fix(c: CallbackQuery):
+    """🔧 تعمیر زیرساخت با دلار."""
+    await _edit(c, infra.repair(c.from_user.id, c.data.split(":", 1)[1]),
+                kb_infra(c.from_user.id))
+
+
 @router.callback_query(F.data == "inv:")
 async def cb_invest(c: CallbackQuery):
     """🏭 سرمایه‌گذاری — دارایی‌های درآمد ساعتی."""
@@ -1066,7 +1191,11 @@ async def _delayed_missile(chat_id, uid):
     msg = war.resolve_missile(uid)
     if msg and bot:
         with contextlib.suppress(Exception):
-            await bot.send_message(chat_id, msg, parse_mode="HTML")
+            await bot.send_message(chat_id, texts.fx(msg), parse_mode="HTML")
+        bbc = war.bbc_pop()
+        if bbc:
+            with contextlib.suppress(Exception):
+                await bot.send_message(chat_id, texts.fx(bbc), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("gno:"))
@@ -1085,9 +1214,10 @@ async def cb_strike(c: CallbackQuery):
     parts = c.data.split(":")
     kind = parts[1]
     count = int(parts[2]) if len(parts) > 2 else 1
+    target = parts[3] if len(parts) > 3 else None
     if kind == "موشکی":
         # 🚀 پرتاب — برخورد بعد از زمان پرواز؛ دشمن فرصت تقویت پدافند دارد
-        msg = war.launch_missile(uid, count)
+        msg = war.launch_missile(uid, count, target)
         if "در راه" in msg:
             await _sticker(c.message.chat, "🚀")
             if TEST_MODE:
@@ -1095,8 +1225,18 @@ async def cb_strike(c: CallbackQuery):
             else:
                 asyncio.create_task(_delayed_missile(c.message.chat.id, uid))
     else:
-        msg = war.strike(uid, kind, count)
-    await c.message.edit_text(msg, parse_mode="HTML", reply_markup=kb_strikes(uid))
+        msg = war.strike(uid, kind, count, target)
+    try:
+        await c.message.edit_text(texts.fx(msg), parse_mode="HTML",
+                                  reply_markup=kb_strikes(uid))
+    except Exception:
+        await c.message.edit_text(msg, parse_mode="HTML",
+                                  reply_markup=kb_strikes(uid))
+    # 📡 خبر فوری بی‌بی‌سی — جداگانه در گروه، با ایموجی جنگی
+    bbc = war.bbc_pop()
+    if bbc and not TEST_MODE:
+        with contextlib.suppress(Exception):
+            await c.message.answer(texts.fx(bbc), parse_mode="HTML")
     await c.answer()
 
 
@@ -1374,6 +1514,10 @@ def _v_inv(uid):
     return invest.view(uid), kb_invest(uid)
 
 
+def _v_infra(uid):
+    return infra.view(uid), kb_infra(uid)
+
+
 # ⌨️ روال دستورها: هر کار یک نام اصلی + نام‌های رایج — همه به یک نتیجه
 WORD_VIEWS = {
     "تجارت": _v_trade, "پروفایل": _v_me, "نظامی": _v_mil,
@@ -1381,6 +1525,7 @@ WORD_VIEWS = {
     "جنگ": _v_war, "حمله": _v_war, "نبرد": _v_war,
     "خرید": _v_ars, "زرادخانه": _v_ars, "تجهیزات": _v_ars,
     "سرمایه": _v_inv, "سرمایه‌گذاری": _v_inv, "معدن": _v_inv, "دارایی": _v_inv,
+    "زیرساخت": _v_infra,
 }
 
 

@@ -183,3 +183,140 @@ def spy(uid, target: str) -> str:
     return (f"🕵️ <b>مأمور دستگیر شد</b> در {tc['flag']} {tc['name']}\n"
             f"└─ ارتباط قطع شد — جان −{texts.fa(20)}\n"
             f"💰 جریمه: {texts.money(p['country'], 300)}")
+
+
+# ═══ 🔥 شورش — تغییر رژیم، آزادی از دست‌نشانده ═══
+
+REVOLT_COST = 400
+REVOLT_WINDOW = 1800          # ۳۰ دقیقه فرصت حمایت
+
+# رژیم‌های ممکن — اولی وضع موجود (خالی)؛ بعدی‌ها با شورش
+REGIMES = {
+    "ir": ["", "پهلوی", "جمهوری خلق"],
+}
+_GENERIC = ["", "حکومت مردمی", "دولت نظامی"]
+
+
+def regime_of(cid) -> str:
+    """🏷 رژیم فعلی کشور — خالی یعنی وضع موجود."""
+    import db
+    i = int(db.kv_get(f"regime_i:{cid}", "0") or 0)
+    lst = REGIMES.get(cid, _GENERIC)
+    return lst[i % len(lst)] if i else ""
+
+
+def _revolt(cid) -> dict:
+    import db
+    d = db.jload(db.kv_get(f"revolt:{cid}"), None) or {}
+    if d and db.now() - int(d.get("ts", 0)) > REVOLT_WINDOW:
+        db.kv_del(f"revolt:{cid}")
+        return {}
+    return d
+
+
+def revolt_view(uid) -> str:
+    """🔥 وضعیت شورش کشور."""
+    import db
+    import texts
+    from game import state, geo
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    cid = p["country"]
+    c = __import__("countries").COUNTRIES[cid]
+    t = texts
+    rv = _revolt(cid)
+    members = db.q("SELECT uid FROM users WHERE country=?", (cid,))
+    need = max(2, (len(members) + 1) // 2)
+    col = geo.colony_of(cid)
+    lines = [t.hdr("شورش مردمی", "🔥"),
+             f"🌍 کشور: {c['flag']} {c['name']}"
+             + (f" ({regime_of(cid)})" if regime_of(cid) else ""),
+             f"🏷 رژیم فعلی: {regime_of(cid) or 'وضع موجود'}"]
+    if col:
+        lines.append(f"⛓ زیر یوغ دست‌نشانده‌ی "
+                     f"{__import__('countries').COUNTRIES[col]['name']} — "
+                     "شورش موفق = آزادی!")
+    if rv:
+        sup = len(rv.get("sup", []))
+        left = max(0, int(rv["ts"]) + REVOLT_WINDOW - db.now()) // 60
+        lines += [t.DASH,
+                  f"🔥 شورش فعال است! رهبر: {texts.mention(int(rv['by']), 'سرباز')}",
+                  f"✊ حمایت: {t.fa(sup)}/{t.fa(need)}",
+                  f"⏱ {t.fa(left)} دقیقه فرصت",
+                  "", "دکمه‌ی «✊ حمایت» را بزن — نیمی از کشور کافی است!"]
+    else:
+        lines += [t.DASH,
+                  f"💰 هزینه‌ی آغاز شورش: {t.money(cid, REVOLT_COST)}",
+                  f"✊ لازم: حمایت {t.fa(need)} نفر از اعضای کشور",
+                  "🏆 پیروزی = تغییر رژیم" + (" و آزادی از یوغ!" if col else ""),
+                  "", "هر شهروندی می‌تواند آغاز کند."]
+    return "\n".join(lines)
+
+
+def revolt_start(uid) -> str:
+    """🔥 آغاز شورش — هزینه دارد، ریسک دارد."""
+    import json as _json
+    import db
+    import texts
+    from game import state
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    cid = p["country"]
+    if _revolt(cid):
+        return "🔥 شورش از قبل فعال است — همکاری کن!"
+    if p["money"] < REVOLT_COST:
+        return f"💰 آغاز شورش {texts.money(cid, REVOLT_COST)} می‌خواهد."
+    db.ex("UPDATE users SET money=money-? WHERE uid=?", (REVOLT_COST, uid))
+    db.kv_set(f"revolt:{cid}", _json.dumps(
+        {"by": uid, "ts": db.now(), "sup": [uid]}, ensure_ascii=False))
+    return revolt_view(uid) + "\n\n📣 شهروندان! بیایید!"
+
+
+def revolt_support(uid) -> str:
+    """✊ حمایت از شورش فعال."""
+    import db
+    import texts
+    from game import state, geo
+    from game import war as _war
+    p = state.active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    cid = p["country"]
+    rv = _revolt(cid)
+    if not rv:
+        return "🔥 شورشی فعال نیست — اول یکی آغازش کند."
+    sup = rv.get("sup", [])
+    if uid not in sup:
+        sup.append(uid)
+    rv["sup"] = sup
+    import json as _json
+    db.kv_set(f"revolt:{cid}", _json.dumps(rv, ensure_ascii=False))
+    members = db.q("SELECT uid FROM users WHERE country=?", (cid,))
+    need = max(2, (len(members) + 1) // 2)
+    if len(sup) < need:
+        return revolt_view(uid)
+    # 🏆 پیروزی شورش — رژیم عوض می‌شود، یوغ می‌شکند
+    db.kv_del(f"revolt:{cid}")
+    i = int(db.kv_get(f"regime_i:{cid}", "0") or 0)
+    lst = REGIMES.get(cid, _GENERIC)
+    ni = (i + 1) % len(lst)
+    db.kv_set(f"regime_i:{cid}", str(ni))
+    new_regime = lst[ni] or "وضع موجود"
+    was_colony = geo.colony_of(cid)
+    geo.free_colony(cid)
+    c = __import__("countries").COUNTRIES[cid]
+    _war.PENDING_BBC.append("\n".join([
+        "📡 <b>خبر فوری — BBC دارک‌زون</b> 🌍",
+        f"Breaking: شورش مردمی در {c['flag']} {c['name']} پیروز شد!",
+        f"🏷 حکومت تازه: <b>{new_regime}</b>"
+        + (f" — آزاد شد از یوغ "
+           f"{__import__('countries').COUNTRIES[was_colony]['name']}!" if was_colony else ""),
+        "🔥 ملت، تاریخ ساخت!"]))
+    return "\n".join([
+        texts.hdr("پیروزی شورش", "🏆"),
+        f"🔥 شورش مردمی {c['flag']} {c['name']} پیروز شد!",
+        f"🏷 رژیم تازه: <b>{new_regime}</b>",
+        "⛓ یوغ دست‌نشانده شکست!" if was_colony else "",
+        "📣 خبر در گروه پخش شد."])

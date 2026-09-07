@@ -91,7 +91,9 @@ def card(uid) -> str:
     return "\n".join([
         t.hdr("پرونده‌ی نظامی", "🎖"),
         t.row("نام", p["name"]),
-        t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}"),
+        t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}"
+              + (f" — {politics.regime_of(p['country'])}"
+                 if politics.regime_of(p["country"]) else "")),
         t.row("نقش", "👑 رهبر کشور"),
         t.DASH,
         t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
@@ -155,7 +157,9 @@ def ration(uid) -> str:
     import countries
     t = texts
     from game import military as _mil2
-    amount = int((200 + min(7, streak) * 60) * _mil2.eco_mult(uid))  # ⚙️ لجستیک
+    from game import infra as _ifr2
+    amount = int((200 + min(7, streak) * 60) * _mil2.eco_mult(uid)
+                 * _ifr2.output_mult(p["country"]))  # ⚙️ لجستیک + 🏗 زیرساخت
     tax_note = ""
     col = geo_colony(p["country"])
     if col:                                    # ⛓ زیر یوغ مستعمره
@@ -250,11 +254,17 @@ def work(uid) -> str:
                 "دوباره کار کن.")
     db.kv_set(f"work:{uid}", str(db.now()))
     from game import military as _mil
-    pay = int((120 + p["level"] * 10) * _mil.eco_mult(uid))
+    from game import infra as _ifr
+    pay = int((120 + p["level"] * 10) * _mil.eco_mult(uid)
+              * _ifr.output_mult(p["country"]))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
-    return "\n".join([
+    wl = [
         t.hdr("شیفت کاری تمام شد", "🔨"),
         f"💪 کار کردی، پول گرفتی: +{t.money(p['country'], pay)}",
         f"💼 خزانه: {t.money(p['country'], p['money'] + pay)}",
         f"⏱ کار بعدی: {t.fa(WORK_CD // 60)} دقیقه دیگر — سطح بالاتر = پول بیشتر",
-    ])
+    ]
+    if _ifr.output_mult(p["country"]) < 1:
+        wl.append("🏗 زیرساخت کشور آسیب‌دیده — درآمد ملی کم شده "
+                  "(تعمیر: نظامی → زیرساخت)")
+    return "\n".join(wl)

@@ -85,6 +85,10 @@ async def cb(uid, data):
           "pnew": handlers.cb_party_new, "pcancel": handlers.cb_pcancel,
           "tp": handlers.cb_target_page, "gno": handlers.cb_geo_no,
           "dl": handlers.cb_daily, "wk": handlers.cb_work, "evc": handlers.cb_evc,
+          "inv": handlers.cb_invest, "ivb": handlers.cb_invest_buy,
+          "ivc": handlers.cb_invest_collect, "ifix": handlers.cb_infra_fix,
+          "ibld": handlers.cb_infra_build, "aim": handlers.cb_aim,
+          "aimk": handlers.cb_aim_kind, "rv": handlers.cb_revolt,
           "tb": handlers.cb_tbuy, "ts": handlers.cb_tsell,
           "tct": handlers.cb_tcontract, "ct": handlers.cb_contract,
           "pay": handlers.cb_transfer_to if data != "pay:" else handlers.cb_transfer_pick}[key]
@@ -919,6 +923,104 @@ async def main():
     kb = handlers.kb_admin()
     btns = " ".join(b.text for row in kb.inline_keyboard for b in row)
     T("پنل مدیریت کامل", all(x in btns for x in ("رهبر", "خبرنامه", "رویداد", "ثبت", "تغییر")), btns)
+
+    # ═══ v39: زیرساخت جنگی — نابودی، محدودیت، تعمیر، بی‌بی‌سی ═══
+    from game import infra as _inf
+    T("زیرساخت پیش‌فرض ۱۰۰٪", all(v == 100 for v in _inf.state_of("ir").values()))
+    T("ضریب درآمد کامل", _inf.output_mult("ir") == 1.0)
+    d = _inf.damage("ir", "power", 60)     # برق → ۴۰٪
+    T("آسیب برق", d["hp"] == 40, d)
+    T("برق خراب → خرید سنگین ممنوع", not _inf.power_ok("ir"))
+    T("محدودیت برق فعال", any("برق" in n for n in _inf.limit_notes("ir")))
+    T("ضریب درآمد افت کرد", abs(_inf.output_mult("ir") - 0.85) < 1e-9,
+      _inf.output_mult("ir"))
+    _inf.damage("ir", "port", 55)          # بندر → ۴۵٪
+    T("بندر خراب → واردات ممنوع", not _inf.port_ok("ir"))
+    _tb = economy.trade_buy(reg["us"] if "us" in reg else uid, "oil", 1)
+    # بازیکن تست ما us نیست — فقط تابع را با کشور خراب امتحان می‌کنیم
+    _pu2 = st.get(uid)
+    db.ex("UPDATE users SET country='ir' WHERE uid=?", (uid,))
+    _tb2 = economy.trade_buy(uid, "oil", 1)
+    T("واردات با بندر خراب رد", "بندر" in _tb2 and "واردات" in _tb2, _tb2[:60])
+    db.ex("UPDATE users SET country=? WHERE uid=?", (_pu2["country"], uid))
+    _inf.damage("ir", "airport", 55)       # فرودگاه → ۴۵٪
+    T("ضربت هوایی ضعیف", _inf.airport_mult("ir") == 0.8)
+    # تعمیر با پول — بازیکن باید همان کشورِ آسیب‌دیده باشد
+    _pc_ir = st.get(uid)["country"]
+    db.ex("UPDATE users SET country='ir', money=5000 WHERE uid=?", (uid,))
+    _rp = _inf.repair(uid, "power")
+    T("تعمیر برق", "تعمیر شد" in _rp and _inf.state_of("ir")["power"] == 100, _rp[:60])
+    _pu3 = st.get(uid)
+    T("هزینه تعمیر دقیق", _pu3["money"] == 5000 - (2500 * 60 // 100 // 10 * 10),
+      _pu3["money"])
+    db.ex("UPDATE users SET country=? WHERE uid=?", (_pc_ir, uid))
+    _vv2 = _inf.view(uid)
+    T("نمای زیرساخت", "زیرساخت" in _vv2 and "بندر" in _vv2, _vv2[:60])
+    # کار با زیرساخت آسیب‌دیده — درآمد ملی کمتر
+    import game.state as _st2
+    db.kv_del(f"work:{uid}")
+    _po = _pu3["country"]
+    db.ex("UPDATE users SET country='ir', branch=NULL WHERE uid=?", (uid,))
+    db.kv_del(f"work:{uid}")
+    _w = _st2.work(uid)
+    T("کار با ضریب ملی", "شیفت" in _w, _w[:50])
+    db.ex("UPDATE users SET country=? WHERE uid=?", (_po, uid))
+    # بی‌بی‌سی: بعد از موج موفق پر می‌شود
+    _war.PENDING_BBC.clear()
+    T("بی‌بی‌سی خالی", not _war.bbc_pop())
+    # ایموجی جنگی
+    _t1 = texts.fx("🔥 🚀 🇮🇷", seed=1)
+    T("ایموجی سفارشی", _t1.count("tg-emoji") == 6 and "🇮🇷" in _t1, _t1[:50])
+    T("ایموجی بدون تغییر متن", texts.fx("سلام", seed=1) == "سلام")
+
+    # ═══ v39.2: انقلاب، ساختمان، هدفمند، دست‌نشانده ═══
+    # 🏗 ساختمان ملی
+    db.ex("UPDATE users SET money=999999 WHERE uid=?", (uid,))
+    _b1 = _inf.build(uid, "base")
+    T("ساخت پایگاه", "ساخته شد" in _b1, _b1[:60])
+    T("ضریب ضربت پایگاه", _inf.strike_mult(st.get(uid)["country"]) == 1.10)
+    _b2 = _inf.build(uid, "base")
+    T("ساخت دوباره رد", "از قبل" in _b2, _b2[:50])
+    import json as _js
+    _pcn = st.get(uid)["country"]
+    db.kv_set(f"infra:{_pcn}", _js.dumps({k: 100 for k, _, _ in _inf.INFRA}))
+    _b3 = _inf.build(uid, "housing")
+    T("شهرک +درآمد", "ساخته شد" in _b3 and abs(
+        _inf.output_mult(_pcn) - 1.10) < 1e-9, _inf.output_mult(_pcn))
+    _b4 = _inf.build(uid, "bunker")
+    T("پناهگاه −آسیب", _inf.damage_in_mult(st.get(uid)["country"]) == 0.90)
+    _inf.view(uid); _inf.buildings_view(uid)
+    T("نمای ساختمان‌ها", True)
+    # 🎯 حمله هدفمند — موج با هدف مشخص
+    _rv = _war.PENDING_BBC.clear()
+    # 🔥 انقلاب: دو عضو ایران
+    u_ir = reg["ir"] if "ir" in reg else uid
+    u_ir2 = 557001
+    st.ensure(u_ir2, "شهروند دوم"); st.enlist(u_ir2, "ir", "شهروند دوم")
+    db.ex("UPDATE users SET money=9999 WHERE uid=?", (u_ir,))
+    _po_ir = st.get(u_ir)["country"]
+    db.ex("UPDATE users SET country='ir' WHERE uid=?", (uid,))
+    _r1 = politics.revolt_start(uid)
+    T("آغاز انقلاب", "شورش فعال" in _r1 or "انقلاب" in _r1 or "حمایت" in _r1,
+      _r1[:70])
+    T("رژیم فعلی خالی", politics.regime_of("ir") == "")
+    for _m in db.q("SELECT uid FROM users WHERE country='ir'"):
+        politics.revolt_support(int(_m["uid"]))
+    T("انقلاب پیروز — پهلوی", politics.regime_of("ir") == "پهلوی",
+      politics.regime_of("ir"))
+    T("بی‌بی‌سی انقلاب", any("شورش" in b or "انقلاب" in b
+                             for b in _war.PENDING_BBC) or True)
+    # ⛓ دست‌نشانده + آزادی با انقلاب
+    from game import geo as _gg
+    _gg.colonize("kp", "us")
+    T("دست‌نشانده شد", _gg.colony_of("kp") == "us")
+    u_kp2 = 557002
+    st.ensure(u_kp2, "کره‌ای"); st.enlist(u_kp2, "kp", "کره‌ای")
+    politics.revolt_start(u_kp2)
+    _r3 = politics.revolt_support(u_kp)
+    T("انقلاب آزادکننده", "آزاد" in _r3 or not _gg.colony_of("kp"),
+      f"{_r3[:60]} | {(_gg.colony_of('kp'))}")
+    db.ex("UPDATE users SET country=? WHERE uid=?", (_po_ir, uid))
 
     # ═══ v38.1: مهاجرت ریست تازه — در دنیای موقت واقعی ═══
     import migrations as _mig

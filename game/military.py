@@ -156,6 +156,11 @@ def buy(uid, iid: str, qty: int = 1) -> str:
     it = countries.ITEMS.get(iid)
     if not it or iid not in countries.COUNTRIES[p["country"]]["items"]:
         return "⛔ این تجهیز در زرادخانه‌ی کشورت نیست."
+    # ⚡ برق ضعیف → خرید تجهیزات سنگین ممنوع (زیرساخت جنگی)
+    from game import infra as _if
+    if not _if.power_ok(p["country"]) and it[5] >= 3000:
+        return ("⚡ شبکه برق کشورت آسیب‌دیده — خرید تجهیزات سنگین ممکن نیست.\n"
+                "🪖 نظامی → 🏗 زیرساخت کشور → تعمیر شبکه برق")
     qty = max(1, min(5, int(qty)))
     deal = iid in economy.daily_deals(p["country"])
     if qty >= 5:
