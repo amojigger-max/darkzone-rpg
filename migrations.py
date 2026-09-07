@@ -36,9 +36,14 @@ def run_all():
     """در بوت روی همه‌ی دنیاها — فقط یک بار برای هر دنیا."""
     for g in db.list_games():
         db.GAME.set(g)
-        if not db.kv_get("reset_v35"):
+        if not db.kv_get("reset_v38"):
+            # 🔄 ریست تازه‌ی بازی: رهبران کشورشان را نگه می‌دارند، بقیه پاک؛
+            # پول همه ۱۰۰۰ دلار + کیت پهپاد تازه
             _reset_world()
-        if not db.kv_get("kit_v35"):
+            _starter_kits()
+            db.kv_set("reset_v38", "1")
+            db.kv_set("kit_v35", "1")
+        elif not db.kv_get("kit_v35"):
             _starter_kits()
             db.kv_set("kit_v35", "1")
     db.GAME.set(None)

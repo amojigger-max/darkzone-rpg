@@ -13,7 +13,7 @@ import config
 import countries
 import db
 import texts
-from game import ai, defense, economy, events, geo, guide, military, politics, quests, state, war
+from game import ai, defense, economy, events, geo, guide, invest, military, politics, quests, state, war
 
 router = Router()
 
@@ -65,10 +65,11 @@ async def menu_lock_mw(handler, event: CallbackQuery, data):
 
 
 TEXT_ALLOWED = {
-    "شروع", "منو",                                        # بازی
+    "شروع", "استارت", "منو",                                # بازی
     "راهنما", "تجارت", "پروفایل", "نظامی", "جهان", "جنگ",  # دستورهای فارسی
     "حمله", "نبرد", "خرید", "زرادخانه", "تجهیزات",        # نام‌های رایج
     "دستورها", "دستور", "دستورات", "کمک",                 # فهرست دستورها
+    "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی",           # سرمایه‌گذاری
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -346,7 +347,8 @@ def kb_main(uid=None) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🔨 کار کن", callback_data="wk:")],
         [InlineKeyboardButton(text="💸 انتقال پول", callback_data="pay:"),
          InlineKeyboardButton(text="⚡ رویدادها", callback_data="mn:events")],
-        [InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
+        [InlineKeyboardButton(text="🏭 سرمایه‌گذاری", callback_data="inv:"),
+         InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
     if uid == config.OWNER_ID:
         rows.append([InlineKeyboardButton(text="🛠 مدیریت", callback_data="ad:stats")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -447,6 +449,18 @@ def kb_def() -> InlineKeyboardMarkup:
                      InlineKeyboardButton(text=f"➕ {L[b]}", callback_data=f"df:{b}")])
     rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
                  InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_invest(uid) -> InlineKeyboardMarkup:
+    """🏭 سرمایه‌گذاری — خرید دارایی + برداشت درآمد ساعتی."""
+    rows = []
+    for key, name, price, inc in invest.ASSETS:
+        rows.append([InlineKeyboardButton(
+            text=f"{name} — {texts.fa(price)} دلار",
+            callback_data=f"ivb:{key}")])
+    rows.append([InlineKeyboardButton(text="💰 برداشت درآمد", callback_data="ivc:")])
+    rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -729,7 +743,7 @@ async def on_my_chat_member(ev):
 # ═══════════ 🚀 شروع ═══════════
 
 @router.message(Command("start"))
-@router.message(F.text.in_(["شروع"]))
+@router.message(F.text.in_(["شروع", "استارت", "شروع کن", "شروع بازی", "استارت کن"]))
 async def cmd_start(m: Message):
     state.ensure(m.from_user.id, m.from_user.first_name, m.chat.id)
     await _group_hello(bot, m.chat.id)
@@ -847,7 +861,14 @@ async def cb_menu(c: CallbackQuery):
     elif what == "ration":
         await _edit(c, state.ration(uid), kb_mil())
     elif what == "branch":
-        await _edit(c, texts.hdr("انتخاب شاخه", "🪖") + "\n\nشاخه‌ی کشورت:", kb_branches(uid))
+        c2 = countries.COUNTRIES.get(p["country"]) if (p := state.active(uid)) else None
+        blines = []
+        if c2:
+            for i, b in enumerate(c2["branches"]):
+                _k, _rn, _rf = military.role_of({"branch": i, "country": p["country"]})
+                blines.append(f"🪖 <b>{b}</b>\n   🎖 {_rn} — {_rf}")
+        await _edit(c, texts.hdr("انتخاب شاخه", "🪖") + "\n\nهر شاخه یک اثر واقعی دارد:\n\n"
+                    + "\n\n".join(blines), kb_branches(uid))
     elif what == "parties":
         await _edit(c, politics.list_parties(uid), kb_parties(uid))
     elif what == "rebel":
@@ -957,6 +978,23 @@ async def cb_menu(c: CallbackQuery):
     elif what == "helpally":
         await _edit(c, war.call_help(uid), kb_pol())
     await c.answer()
+
+
+@router.callback_query(F.data == "inv:")
+async def cb_invest(c: CallbackQuery):
+    """🏭 سرمایه‌گذاری — دارایی‌های درآمد ساعتی."""
+    await _edit(c, invest.view(c.from_user.id), kb_invest(c.from_user.id))
+
+
+@router.callback_query(F.data.startswith("ivb:"))
+async def cb_invest_buy(c: CallbackQuery):
+    await _edit(c, invest.buy(c.from_user.id, c.data.split(":", 1)[1]),
+                kb_invest(c.from_user.id))
+
+
+@router.callback_query(F.data == "ivc:")
+async def cb_invest_collect(c: CallbackQuery):
+    await _edit(c, invest.collect(c.from_user.id), kb_invest(c.from_user.id))
 
 
 @router.callback_query(F.data.startswith("br:"))
@@ -1332,12 +1370,17 @@ def _v_ars(uid):
     return military.arsenal(uid), kb_arsenal(uid)
 
 
+def _v_inv(uid):
+    return invest.view(uid), kb_invest(uid)
+
+
 # ⌨️ روال دستورها: هر کار یک نام اصلی + نام‌های رایج — همه به یک نتیجه
 WORD_VIEWS = {
     "تجارت": _v_trade, "پروفایل": _v_me, "نظامی": _v_mil,
     "جهان": _v_world,
     "جنگ": _v_war, "حمله": _v_war, "نبرد": _v_war,
     "خرید": _v_ars, "زرادخانه": _v_ars, "تجهیزات": _v_ars,
+    "سرمایه": _v_inv, "سرمایه‌گذاری": _v_inv, "معدن": _v_inv, "دارایی": _v_inv,
 }
 
 
@@ -1476,7 +1519,7 @@ async def fa_words(m: Message):
     # 🎛 گروه تمیز: هر متن دیگری نادیده — همه‌چیز از «منو»
     if not TEST_MODE and w not in TEXT_ALLOWED:
         return
-    if w == "شروع":
+    if w in ("شروع", "استارت", "شروع کن", "شروع بازی", "استارت کن"):
         return await cmd_start(m)
     if w == "منو":
         act = state.active(uid)

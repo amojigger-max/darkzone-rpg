@@ -85,6 +85,8 @@ def card(uid) -> str:
     import game.military as mil
     from game import politics
     party = politics.my_party(uid)
+    from game import invest as _iv
+    _rate = _iv.rate(uid)
     spec, pct, sname = countries.spec_of(p["country"])
     return "\n".join([
         t.hdr("پرونده‌ی نظامی", "🎖"),
@@ -94,10 +96,13 @@ def card(uid) -> str:
         t.DASH,
         t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
+        t.row("نقش شاخه", " ".join(mil.role_of(p)[1:]) or "—"),
         t.row("درجه", countries.rank_name(p["level"])),
         t.row("تجربه", f"{t.fa(p['xp'])}/{t.fa(xp_need(p['level']))}"),
         t.DASH,
         t.row("خزانه", f"💰 {t.money(p['country'], p['money'])}"),
+        *([t.row("درآمد ساعتی", "🏭 " + t.money(p["country"], _rate))]
+          if _rate else []),
         t.row("جان", f"❤️ {t.fa(p['hp'])}/{t.fa(p['max_hp'])}"),
         t.row("سوابق", f"⚔️ {t.fa(p['kills'])} · 🕵 {t.fa(p['spy_ops'])}"),
         t.row("حزب", party["name"] if party else "—"),
@@ -149,7 +154,8 @@ def ration(uid) -> str:
         streak = 1
     import countries
     t = texts
-    amount = 200 + min(7, streak) * 60      # روز ۷+: ۶۲۰
+    from game import military as _mil2
+    amount = int((200 + min(7, streak) * 60) * _mil2.eco_mult(uid))  # ⚙️ لجستیک
     tax_note = ""
     col = geo_colony(p["country"])
     if col:                                    # ⛓ زیر یوغ مستعمره
@@ -243,7 +249,8 @@ def work(uid) -> str:
         return (f"⏳ خسته‌ای! {t.fa(max(60, (left + 59) // 60))} دقیقه دیگر "
                 "دوباره کار کن.")
     db.kv_set(f"work:{uid}", str(db.now()))
-    pay = 120 + p["level"] * 10
+    from game import military as _mil
+    pay = int((120 + p["level"] * 10) * _mil.eco_mult(uid))
     db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
     return "\n".join([
         t.hdr("شیفت کاری تمام شد", "🔨"),

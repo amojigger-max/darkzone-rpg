@@ -468,17 +468,23 @@ def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
     if mspec == kind:
         spec_mark = f" 🎖 تخصص {countries.COUNTRIES[p['country']]['name']} فعال!"
         spec_mult = 1 + mpct / 100
+    # 🎖 نقش شاخه‌ی مهاجم + 🛡 سپر وطنِ مدافع — اثر واقعی و دقیق
+    role_mult, role_mark = military.atk_mult(p, kind)
+    shield = military.def_mult(ecid)
+    shield_note = (f"\n🛡 سپر وطن دشمن: آسیب −{texts.fa(int((1 - shield) * 100))}٪"
+                   if shield < 1 else "")
     t = texts
     lines = [t.hdr(title or f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
                                                    "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
-             f"{ec['flag']} {ec['name']} ← {t.fa(count)}× {it[0]} {it[1]}{spec_mark}",
-             f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}",
+             f"{ec['flag']} {ec['name']} ← {t.fa(count)}× {it[0]} {it[1]}{spec_mark}{role_mark}",
+             f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}{shield_note}",
              t.K]
     score_add = 0
     for n in range(1, count + 1):
         base_dmg = (it[3] * best["dur"] // 100
                     * military._lvl_mult(uid, best["iid"]) // 100) + p["level"] * 2
-        dmg = max(4, int(base_dmg * spec_mult * random.uniform(0.7, 1.3) * dmg_mult))
+        dmg = max(4, int(base_dmg * spec_mult * role_mult
+                         * random.uniform(0.7, 1.3) * dmg_mult * shield))
         intercepted = random.random() < chance
         if intercepted:
             lines.append(f"▫️ {texts.fa(n)}. 🛡 دفع شد — پدافند نابودش کرد")

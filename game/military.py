@@ -31,12 +31,86 @@ def join_branch(uid, idx: int) -> str:
         return "⛔ شاخه نامعتبر."
     db.ex("UPDATE users SET branch=? WHERE uid=?", (idx, uid))
     t = texts
+    k, rname, reff = role_of(state.active(uid))
+    role_line = f"\n🎖 نقش: <b>{rname}</b> — {reff}" if k else ""
     return "\n".join([
         t.hdr("عضویت نظامی", "🪖"),
         t.row("شاخه", c["branches"][idx]),
         t.row("کشور", f"{c['flag']} {c['name']}"),
+        role_line,
         "", "اکنون سرباز این شاخه‌ای — درجه با رزم بالا می‌رود.",
         "🛒 گام بعد: تجهیزات بخر و رزم کن — از «منو»"])
+
+
+# ═══ 🎖 نقش شاخه‌ها — هر شاخه یک اثر واقعی و دقیق ═══
+
+BRANCH_ROLE_DEFS = {
+    "atk":  ("🗡 خط مقدم", "+۱۵٪ قدرت همه‌ی ضربت‌های تو در جنگ"),
+    "miss": ("🚀 موشکی‌انداز", "+۱۰٪ قدرت ضربت موشکی"),
+    "air":  ("✈️ خلبان", "+۱۰٪ قدرت ضربت هوایی و پهپادی"),
+    "sea":  ("🚢 ناوگان", "+۱۰٪ قدرت ضربت دریایی"),
+    "grd":  ("🚜 زرهی", "+۱۰٪ قدرت ضربت زمینی"),
+    "def":  ("🛡 سپر وطن", "کشورت به‌ازای هر عضو ۵٪ کمتر آسیب می‌بیند (تا ۱۵٪)"),
+    "eco":  ("⚙️ لجستیک", "+۱۰٪ درآمد شیفت کاری و جیره‌ی تو"),
+}
+
+# نام شاخه → نقش تخصصی همان حوزه؛ بدون تطبیق، نقش جایگاهی
+_NAME_RULES = (
+    ("موشکی", "miss"), ("هوایی", "air"), ("پرواز", "air"), ("هواپیمایی", "air"),
+    ("دریایی", "sea"), ("ناو", "sea"), ("نگ ", "sea"), ("نگ‌", "sea"),
+    ("زرهی", "grd"), ("تانک", "grd"), ("پدافند", "def"), ("پدафند", "def"),
+    ("مارینز", "atk"), ("دلتا", "atk"), ("اسپتس", "atk"), ("واگنر", "atk"),
+    ("کماندو", "atk"), ("تکاور", "atk"), ("چتر", "atk"), ("ویژه", "atk"),
+)
+_DEFAULT_BY_IDX = ("atk", "def", "eco")
+
+
+def role_of(p) -> tuple:
+    """🎖 نقش شاخه‌ی بازیکن — (کلید، نام، متن اثر)؛ دقیق و همیشه معتبر."""
+    if not p or p["branch"] in (None, ""):
+        return ("", "", "")
+    nm = branch_name(p)
+    for word, key in _NAME_RULES:
+        if word in nm:
+            k = key
+            break
+    else:
+        idx = int(p["branch"]) if str(p["branch"]).isdigit() else 0
+        k = _DEFAULT_BY_IDX[idx % len(_DEFAULT_BY_IDX)]
+    name, eff = BRANCH_ROLE_DEFS[k]
+    return (k, name, eff)
+
+
+def atk_mult(p, kind: str):
+    """⚔️ ضریب ضربتهای بازیکن از نقش شاخه — (ضریب، نشانه)."""
+    k, name, _ = role_of(p)
+    if not k:
+        return 1.0, ""
+    if k == "atk":
+        return 1.15, f" {name}"
+    if kind == "پهپادی" and k == "air":
+        return 1.10, f" {name}"
+    pairs = {"miss": "موشکی", "air": "هوایی", "sea": "دریایی", "grd": "زمینی"}
+    if pairs.get(k) == kind:
+        return 1.10, f" {name}"
+    return 1.0, ""
+
+
+def def_mult(cid: str) -> float:
+    """🛡 سپر کشور — هر عضو «سپر وطن» ۵٪ آسیب کمتر، سقف ۱۵٪."""
+    n = 0
+    for r in db.q("SELECT branch FROM users WHERE country=? AND branch IS NOT NULL",
+                  (cid,)):
+        p = {"branch": r["branch"], "country": cid}
+        if role_of(p)[0] == "def":
+            n += 1
+    return 1 - min(0.15, 0.05 * n)
+
+
+def eco_mult(uid) -> float:
+    """⚙️ لجستیک — ۱۰٪ درآمد بیشتر از کار و جیره."""
+    p = state.active(uid)
+    return 1.10 if p and role_of(p)[0] == "eco" else 1.0
 
 
 # ═══════════ تجهیزات ═══════════

@@ -341,7 +341,8 @@ async def main():
             leak.append(f"{c}→{str(m_d.out)[:30]}")
     T(f"دستورهای مرده ساکت ({len(dead)})", not leak, leak)
     alive = ["شروع", "منو", "حمله", "نبرد", "خرید", "زرادخانه",
-             "تجهیزات", "دستورها", "دستور", "دستورات", "کمک"]
+             "تجهیزات", "دستورها", "دستور", "دستورات", "کمک",
+             "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی"]
     silent = []
     for c in alive:
         m_a = Msg(c, uid)
@@ -505,6 +506,15 @@ async def main():
     T("واژه پروفایل", len(out) > 30, out[:60])
     out = await cmd("راهنما", NOOB)
     T("واژه راهنما", "راهنما" in out, out[:60])
+    # ═══ v38.1: استارت = شروع · منو برای تازه‌وارد · ریست v38 ═══
+    out = await cmd("استارت", NOOB)
+    T("استارت = شروع", "شروع" in out or "کشور" in out or "خوش" in out, out[:60])
+    out = await cmd("منو", NOOB)
+    T("منو بدون شروع = خوش‌آمد", len(out) > 30 and out != "None", out[:60])
+    out = await cmd("استارت کن", NOOB)
+    T("استارت کن هم کار می‌کند", bool(out), out[:50])
+    out = await cmd("شروع بازی", NOOB)
+    T("شروع بازی هم کار می‌کند", bool(out), out[:50])
     # 💬 پیوی بدون دنیا → راهنمای پیوی
     class PMChat:
         type, id = "private", 42
@@ -606,6 +616,69 @@ async def main():
     T("ایران→آمریکا هوایی آزاد", _war.can_strike_kind("ir", "us", "هوایی")[0])
     T("ایران→امارات زمینی ممنوع", not _war.can_strike_kind("ir", "ae", "زمینی")[0])
     T("رویداد هر ۴۰ دقیقه", _ev.MIN_GAP == 2400, _ev.MIN_GAP)
+
+    # ═══ v38: نقش شاخه‌ها — هر شاخه اثر واقعی ═══
+    from game import military as _mi
+    u_br = reg["ir"]
+    db.ex("UPDATE users SET branch=0 WHERE uid=?", (u_br,))
+    _p0 = st.get(u_br)
+    T("نقش جایگاه ۰ = خط مقدم", _mi.role_of(_p0)[0] == "atk", _mi.role_of(_p0))
+    T("ضریب خط مقدم ۱۵٪", _mi.atk_mult(_p0, "موشکی")[0] == 1.15)
+    T("نشانه نقش در موج", "خط مقدم" in _mi.atk_mult(_p0, "موشکی")[1])
+    db.ex("UPDATE users SET branch=1 WHERE uid=?", (u_br,))
+    _p1 = st.get(u_br)
+    T("نقش جایگاه ۱ = سپر وطن", _mi.role_of(_p1)[0] == "def", _mi.role_of(_p1))
+    T("سپر ۱ نفر = ۵٪", abs(_mi.def_mult("ir") - 0.95) < 1e-9, _mi.def_mult("ir"))
+    db.ex("UPDATE users SET branch=2 WHERE uid=?", (u_br,))
+    _p2 = st.get(u_br)
+    T("نقش جایگاه ۲ = لجستیک", _mi.role_of(_p2)[0] == "eco", _mi.role_of(_p2))
+    T("لجستیک ۱۰٪+", _mi.eco_mult(u_br) == 1.10)
+    # نام شاخه → نقش تخصصی: نیروی موشکی چین
+    u_cn = reg.get("cn") or st.ensure(778899, "چینی"); st.enlist(u_cn, "cn", "چینی")
+    db.ex("UPDATE users SET branch=1 WHERE uid=?", (u_cn,))   # نیروی موشکی
+    _pc = st.get(u_cn)
+    T("نام موشکی → موشکی‌انداز", _mi.role_of(_pc)[0] == "miss", _mi.role_of(_pc))
+    T("ضریب موشکی ۱۰٪", _mi.atk_mult(_pc, "موشکی")[0] == 1.10)
+    T("ضریب موشکی در هوایی نه", _mi.atk_mult(_pc, "هوایی")[0] == 1.0)
+    db.ex("UPDATE users SET branch=NULL WHERE uid=?", (u_br,))
+    db.ex("UPDATE users SET branch=NULL WHERE uid=?", (u_cn,))
+    T("بدون شاخه ضریب ۱", _mi.atk_mult(st.get(u_br), "موشکی")[0] == 1.0)
+    T("بدون سپرباز آسیب کامل", _mi.def_mult("kp") == 1.0)
+
+    # ═══ v38: سرمایه‌گذاری — درآمد ساعتی واقعی و دقیق ═══
+    from game import invest as _iv
+    u_inv = reg["us"]
+    db.ex("UPDATE users SET money=100000 WHERE uid=?", (u_inv,))
+    out = _iv.buy(u_inv, "mine")
+    T("خرید معدن", "معدن طلا" in out and "خریده شد" in out, out[:60])
+    _pu = st.get(u_inv)
+    T("پول کم شد دقیق", _pu["money"] == 97500, _pu["money"])
+    out = _iv.collect(u_inv)
+    T("زودتر از ساعت = صبر", "دقیقه دیگر" in out or "شروع شد" in out, out[:60])
+    db.kv_set(f"invt:{u_inv}", str(db.now() - 7200))          # ۲ ساعت گذشته
+    out = _iv.collect(u_inv)
+    T("برداشت ۲ ساعت", "واریز شد" in out and "۳۰۰" in out, out[:80])
+    T("پول دقیق رسید", st.get(u_inv)["money"] == 97800, st.get(u_inv)["money"])
+    db.kv_set(f"invt:{u_inv}", str(db.now() - 5400))          # ۱.۵ ساعت
+    out = _iv.collect(u_inv)
+    T("ساعت کامل پرداخت", "واریز شد" in out, out[:60])
+    T("پول دقیق ۱ ساعت", st.get(u_inv)["money"] == 97950, st.get(u_inv)["money"])
+    db.kv_set(f"invt:{u_inv}", str(db.now() - 1800))          # نیم ساعت
+    out = _iv.collect(u_inv)
+    T("نیم ساعت = صبر", "دقیقه دیگر" in out, out[:60])
+    db.kv_set(f"invt:{u_inv}", str(db.now() - 9000))          # ۲.۵ ساعت
+    out = _iv.collect(u_inv)
+    T("۲.۵ ساعت = پرداخت ۲", "واریز شد" in out and "۲ ساعت" in out, out[:80])
+    T("ناقص نیم‌ساعته حفظ", st.get(u_inv)["money"] == 98250, st.get(u_inv)["money"])
+    _iv.buy(u_inv, "oil")
+    T("نرخ ساعتی جمع", _iv.rate(u_inv) == 570, _iv.rate(u_inv))
+    _vv = _iv.view(u_inv)
+    T("نمای سرمایه", "معدن طلا" in _vv and "دکل نفت" in _vv, _vv[:60])
+    _cd = st.card(u_inv)
+    T("کارت: درآمد ساعتی", "درآمد ساعتی" in _cd, _cd[:80])
+    db.ex("UPDATE users SET money=1000 WHERE uid=?", (u_inv,))
+    T("پول همه‌جا دلار", all("دلار" in texts.money(c, 5) for c in ("us", "ir", "kp")))
+
 
     # جنگ منطقی زنده: کره‌ی شمالی (شبه‌جزیره) علیه ژاپن (جزیره)
     u_kp = reg["kp"]
@@ -846,6 +919,42 @@ async def main():
     kb = handlers.kb_admin()
     btns = " ".join(b.text for row in kb.inline_keyboard for b in row)
     T("پنل مدیریت کامل", all(x in btns for x in ("رهبر", "خبرنامه", "رویداد", "ثبت", "تغییر")), btns)
+
+    # ═══ v38.1: مهاجرت ریست تازه — در دنیای موقت واقعی ═══
+    import migrations as _mig
+    import os as _os2
+    _gid = -100999001
+    db.GAME.set(_gid)                      # games/-100999001.db می‌سازد
+    db.ex("INSERT INTO users(uid,name,country,money,branch,kills,is_leader) "
+          "VALUES(501,'رهبر','ir',77777,0,9,1)")
+    db.ex("INSERT INTO users(uid,name,money) VALUES(502,'رامنش',500)")
+    db.ex("INSERT INTO wars(a,b,status,score_a,score_b) VALUES('us','ru','active',9,0)")
+    db.kv_set("menu:501", "1:1")
+    db.kv_set("inv:501", '{"mine": 3}')
+    db.kv_del("reset_v38")
+    db.GAME.set(None)
+    _mig.run_all()
+    db.GAME.set(_gid)
+    _r = db.one("SELECT money, branch, kills, country FROM users WHERE uid=501")
+    T("ریست v38: پول ۱۰۰۰", _r["money"] == 1000, _r["money"])
+    T("ریست v38: شاخه پاک", _r["branch"] is None, _r["branch"])
+    T("ریست v38: کشور رهبر ماند", _r["country"] == "ir", _r["country"])
+    T("ریست v38: کشتار صفر", _r["kills"] == 0, _r["kills"])
+    T("ریست v38: بی‌کشور حذف", not db.one("SELECT 1 FROM users WHERE uid=502"))
+    T("ریست v38: جنگ پاک", db.one("SELECT COUNT(*) c FROM wars")["c"] == 0)
+    T("ریست v38: دارایی پاک", not db.kv_get("inv:501"))
+    T("ریست v38: پهپاد تازه", db.one(
+        "SELECT COUNT(*) c FROM inventory WHERE uid=501 AND iid='drone_ir'")["c"] == 1)
+    T("ریست v38: پرچم‌ها", db.kv_get("reset_v38") == "1" and db.kv_get("kit_v35") == "1")
+    db.GAME.set(None)
+    _mig.run_all()                          # دوباره → هیچ تغییری نکند
+    db.GAME.set(_gid)
+    T("ریست فقط یک بار", db.one("SELECT money FROM users WHERE uid=501")["money"] == 1000)
+    db.GAME.set(None)
+    # 🧹 دنیای موقت پاک شود
+    db.con().close()
+    del db._conns[db.game_path(_gid)]
+    _os2.remove(db.game_path(_gid))
 
     print(f"\n{'═' * 20} نتیجه {'═' * 20}")
     print(f"✅ موفق: {len(PASS)}")
