@@ -228,6 +228,11 @@ async def main():
     @dp.error()
     async def on_error(ev: ErrorEvent):
         try:
+            etxt = str(ev.exception)
+            # 🤫 خطای بی‌اهمیت: توست دکمه دیر شد ولی خود عمل انجام شده
+            if ("query is too old" in etxt
+                    or "query ID is invalid" in etxt):
+                return
             tb = traceback.format_exc()
             db.log("error", tb[-500:])
             with contextlib.suppress(Exception):
