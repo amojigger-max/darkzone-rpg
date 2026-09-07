@@ -86,7 +86,8 @@ async def cb(uid, data):
           "tp": handlers.cb_target_page, "gno": handlers.cb_geo_no,
           "dl": handlers.cb_daily, "wk": handlers.cb_work, "evc": handlers.cb_evc,
           "tb": handlers.cb_tbuy, "ts": handlers.cb_tsell,
-          "tct": handlers.cb_tcontract, "ct": handlers.cb_contract}[key]
+          "tct": handlers.cb_tcontract, "ct": handlers.cb_contract,
+          "pay": handlers.cb_transfer_to if data != "pay:" else handlers.cb_transfer_pick}[key]
     try:
         await fn(c)
         return (c.message.out or "") + "|" + (c.answered or "")
@@ -324,13 +325,14 @@ async def main():
 
     # ═══ ۱۳. دستورهای مرده = سکوت مطلق · زنده‌ها = پاسخ ═══
     handlers.TEST_MODE = False
-    dead = ["پروفایل", "کارنامه", "کارت", "ارتشی", "سرباز", "تجهیزات", "زرادخانه",
+    # زنده‌های تازه‌ای که پاسخ می‌دهند: منو/شروع/راهنما/تجارت/پروفایل/نظامی/جهان/جنگ
+    dead = ["کارنامه", "کارت", "ارتشی", "سرباز", "تجهیزات", "زرادخانه",
             "خرید", "رزم", "جنگیدن", "استراحت", "درمان", "تعمیر", "جیره", "دستمزد",
-            "احزاب", "عضویت x", "شورش", "جاسوسی", "جهان", "رتبه", "برترین", "نقشه",
+            "احزاب", "عضویت x", "شورش", "جاسوسی", "رتبه", "برترین", "نقشه",
             "بازار", "اقتصاد", "پدافند", "جبهه", "اخبار", "ارتش", "ماموریت",
             "مأموریت", "چالش", "جایزه", "بازارسیاه", "سیاه", "نبرد x", "صلح",
-            "راهنما", "کمک", "تحریم", "تنگه", "قبول", "تسلیم", "بیانیه", "حزب",
-            "جنگ آمریکا", "حمله موشکی", "خریدسیاه f35", "اتحاد روسیه"]
+            "کمک", "تحریم", "تنگه", "قبول", "تسلیم", "بیانیه", "حزب",
+            "حمله موشکی", "خریدسیاه f35", "اتحاد روسیه"]
     leak = []
     for c in dead:
         m_d = Msg(c, uid)
@@ -443,9 +445,55 @@ async def main():
     price5 = int(economy.real_price(_co.ITEMS['kornet'][5]) * 5 * 0.9)
     p1 = int(economy.real_price(_co.ITEMS['kornet'][5]))
     T("هزینه ×۵ درست", m0["money"] == 99999 - p1 - price5, m0["money"])
-    # پول شروع ۱۰۰۰
+    # پول شروع ۱۰۰۰۰
     st.ensure(888, "نو"); st.enlist(888, "ir", "نو")
-    T("پول شروع ۱۰۰۰", st.get(888)["money"] == 1000, st.get(888)["money"])
+    T("پول شروع ۱۰۰۰۰", st.get(888)["money"] == 10000, st.get(888)["money"])
+    # 🎁 مهاجرت‌های یک‌باره: هدیه‌ی سلطنتی + پول شروع همه
+    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money,is_leader) "
+          "VALUES(8785446505,'USG','us',500,1)")
+    db.ex("INSERT OR IGNORE INTO users(uid,name,country,money) "
+          "VALUES(889,'پ2','fr',300)")
+    import migrations
+    migrations._gifts()
+    us = st.get(8785446505)
+    T("هدیه ۱۰۰میلیون", us["money"] == 100000000, us["money"])
+    n_fleet = db.one("SELECT COUNT(*) c FROM inventory WHERE uid=8785446505 "
+                     "AND iid IN ('carrier','f22','f35','burke','abrams')")
+    T("۵ تجهیزات آمریکایی", n_fleet["c"] == 5, n_fleet["c"])
+    T("۱میلیون + شروع تا ۱۰هزار", st.get(889)["money"] == 1000300,
+      st.get(889)["money"])
+    db.ex("UPDATE users SET money=55 WHERE uid=889")
+    migrations._gifts()
+    T("مهاجرت فقط یک بار", st.get(889)["money"] == 55 and
+      st.get(8785446505)["money"] == 100000000)
+    # 💸 انتقال دقیق و بی‌کارمزد
+    db.ex("UPDATE users SET money=20000 WHERE uid=888")
+    db.ex("UPDATE users SET money=1000 WHERE uid=889")
+    out = await cb(888, "pay:")
+    T("منوی انتقال", "کدام بازیکن" in out, out[:60])
+    out = await cb(888, "pay:889")
+    T("گیرنده‌ی انتقال", "مبلغ" in out, out[:60])
+    out = await cmd("۱۵۰۰۰", 888)
+    T("واریز دقیق", "واریز" in out, out[:60])
+    T("کسر دقیق", st.get(888)["money"] == 5000, st.get(888)["money"])
+    T("رسید دقیق", st.get(889)["money"] == 16000, st.get(889)["money"])
+    await cb(888, "pay:889")
+    out = await cmd("۹۹۹۹۹۹", 888)
+    T("کمبود پول", "کافی" in out, out[:60])
+    # ⌨️ واژه‌های فارسی بدون اسلش
+    out = await cmd("تجارت", 888)
+    T("واژه تجارت", "میز تجارت" in out, out[:60])
+    out = await cmd("پروفایل", 888)
+    T("واژه پروفایل", len(out) > 30, out[:60])
+    out = await cmd("راهنما", NOOB)
+    T("واژه راهنما", "راهنما" in out, out[:60])
+    # 💬 پیوی بدون دنیا → راهنمای پیوی
+    class PMChat:
+        type, id = "private", 42
+    m_pm = Msg("منو", 888)
+    m_pm.chat = PMChat()
+    await handlers.fa_words(m_pm)
+    T("پیوی بدون دنیا", "پیوی" in m_pm.out, m_pm.out[:60])
     # فیلتر دستورها در حالت واقعی
     handlers.TEST_MODE = False
     class M2:

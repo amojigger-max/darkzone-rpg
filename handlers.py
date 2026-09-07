@@ -65,10 +65,12 @@ async def menu_lock_mw(handler, event: CallbackQuery, data):
 
 
 TEXT_ALLOWED = {
-    "شروع", "منو",                               # بازی: فقط همین دو
-    "رهبر", "ثبت", "تغییر", "تنظیم",             # ابزار مالک
+    "شروع", "منو",                                        # بازی
+    "راهنما", "تجارت", "پروفایل", "نظامی", "جهان", "جنگ",  # دستورهای فارسی
+    "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
+WORLD_OF = None   # 💬 حلقه‌ی پیوی → دنیای بازیکن (run.py در بوت ست می‌کند)
 
 
 # ═══════════ 🚫 بازی فقط در گروه ═══════════
@@ -346,8 +348,9 @@ def kb_main(uid=None) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🧭 چی بزنم؟", callback_data="mn:howto")],
         [InlineKeyboardButton(text="🎁 جایزه‌ی روزانه", callback_data="dl:"),
          InlineKeyboardButton(text="🔨 کار کن", callback_data="wk:")],
-        [InlineKeyboardButton(text="⚡ رویدادها", callback_data="mn:events"),
-         InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
+        [InlineKeyboardButton(text="💸 انتقال پول", callback_data="pay:"),
+         InlineKeyboardButton(text="⚡ رویدادها", callback_data="mn:events")],
+        [InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
     if uid == config.OWNER_ID:
         rows.append([InlineKeyboardButton(text="🛠 مدیریت", callback_data="ad:stats")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1301,6 +1304,76 @@ async def cb_pcancel(c: CallbackQuery):
 
 # ═══════════ 🗣 دستورهای متنی فارسی ═══════════
 
+# ═══════════ ⌨️ دستورهای فارسی بدون اسلش ═══════════
+def _v_trade(uid):
+    return economy.trade_view(uid), kb_trade(uid)
+
+
+def _v_me(uid):
+    return state.card(uid), kb_main(uid)
+
+
+def _v_mil(uid):
+    return texts.hdr("فرماندهی نظامی", "🪖") + "\n\nیکی را انتخاب کن:", kb_mil()
+
+
+def _v_world(uid):
+    return texts.hdr("شورای امنیت", "🌍") + "\n\nیکی را انتخاب کن:", kb_world()
+
+
+def _v_war(uid):
+    p = state.active(uid)
+    if p and war.war_of(p["country"]):
+        return war.front(uid), kb_strikes(uid)
+    return "\n".join([texts.hdr("فرماندهی جنگ", "⚔️"), "",
+                       "🕊 کشورت در جنگ نیست.", "",
+                       "کشور هدف را انتخاب کن — 👑 فقط رهبر:"]), kb_declare(uid)
+
+
+WORD_VIEWS = {
+    "تجارت": _v_trade, "پروفایل": _v_me, "نظامی": _v_mil,
+    "جهان": _v_world, "جنگ": _v_war,
+}
+
+
+@router.callback_query(F.data == "pay:")
+async def cb_transfer_pick(c: CallbackQuery):
+    """💸 انتخاب گیرنده‌ی پول."""
+    uid = c.from_user.id
+    if not state.active(uid):
+        return await c.answer("⛔ اول «شروع»", show_alert=True)
+    rows = db.q("SELECT uid, name, country FROM users "
+                "WHERE country IS NOT NULL AND uid != ? ORDER BY country", (uid,))
+    if not rows:
+        return await _edit(c, "👥 هنوز بازیکن دیگری نیست — دوستت را دعوت کن!",
+                           kb_main())
+    kb = [[InlineKeyboardButton(
+        text=f"{countries.COUNTRIES[r['country']]['flag']} "
+             f"{(r['name'] or 'سرباز')[:14]}",
+        callback_data=f"pay:{r['uid']}")] for r in rows]
+    kb.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    await _edit(c, texts.hdr("انتقال پول", "💸") + "\n\nبه کدام بازیکن؟",
+                InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("pay:"))
+async def cb_transfer_to(c: CallbackQuery):
+    """💸 گرفتن مبلغ — دقیق و بی‌کارمزد."""
+    uid = c.from_user.id
+    to = int(c.data.split(":", 1)[1])
+    dst = db.one("SELECT name FROM users WHERE uid=?", (to,))
+    me = db.one("SELECT country, money FROM users WHERE uid=?", (uid,))
+    if not dst or not me or to == uid:
+        return await c.answer("⛔ گیرنده نامعتبر", show_alert=True)
+    _pend_set(uid, c.message.chat.id, f"pay:{to}")
+    await _edit(c, "\n".join([
+        texts.hdr("انتقال پول", "💸"), "",
+        f"👤 گیرنده: {texts.mention(to, dst['name'])}",
+        f"💰 موجودی تو: {texts.money(me['country'], me['money'])}", "",
+        "✍️ <b>مبلغ را بنویس — فقط عدد</b> (مثلاً ۵۰۰۰۰)",
+        "✋ لغو: «لغو»"]), kb_cancel_pol())
+
+
 async def fa_words(m: Message):
     t = (m.text or "").strip()
     if not t:
@@ -1311,7 +1384,12 @@ async def fa_words(m: Message):
         w = "منو"
     arg = parts[1] if len(parts) > 1 else ""
     uid = m.from_user.id
-    state.ensure(uid, m.from_user.first_name, m.chat.id,
+    # 💬 پیوی: بازی در گروه، خرید و مدیریت در پیوی — بدون دنیا، راهنما
+    if m.chat.type == "private":
+        if WORLD_OF is None or not WORLD_OF(uid):
+            return await m.answer(texts.PM_GUIDE, parse_mode="HTML")
+    state.ensure(uid, m.from_user.first_name,
+                 None if m.chat.type == "private" else m.chat.id,
                  getattr(m.from_user, "username", None))
     # ✍️ ورودی در انتظار (بیانیه / حزب) — قبل از فیلتر، بعد از ثبت حضور
     pend = _pend_pop(uid, m.chat.id)
@@ -1319,6 +1397,28 @@ async def fa_words(m: Message):
         if w == "لغو":
             return await m.answer("✋ لغو شد — هر وقت خواستی از منو دوباره شروع کن.",
                                   parse_mode="HTML")
+        if pend.startswith("pay:"):
+            to = int(pend.split(":", 1)[1])
+            amt = texts.to_int(w)
+            me = db.one("SELECT country, money FROM users WHERE uid=?", (uid,))
+            dst = db.one("SELECT name FROM users WHERE uid=?", (to,))
+            if not dst or not me:
+                return await m.answer("⛔ گیرنده پیدا نشد — از «منو» دوباره",
+                                      parse_mode="HTML")
+            if not amt or amt < 1:
+                return await m.answer(
+                    "⛔ فقط عدد بنویس — مثلاً <code>۵۰۰۰۰</code>",
+                    parse_mode="HTML")
+            if amt > me["money"]:
+                return await m.answer(
+                    "💰 پول کافی نداری — داری: " +
+                    texts.money(me["country"], me["money"]), parse_mode="HTML")
+            db.ex("UPDATE users SET money=money-? WHERE uid=?", (amt, uid))
+            db.ex("UPDATE users SET money=money+? WHERE uid=?", (amt, to))
+            return await m.answer(
+                "✅ <b>واریز دقیق</b>\n\n" +
+                texts.money(me["country"], amt) + " به " +
+                texts.mention(to, dst["name"]) + " رسید", parse_mode="HTML")
         if pend == "stmt":
             sent = await m.answer(politics.statement(uid, t), parse_mode="HTML",
                                   reply_markup=kb_pol())
@@ -1358,7 +1458,7 @@ async def fa_words(m: Message):
                                   parse_mode="HTML", reply_markup=kb_pol())
             _own(m, sent, uid)
             return sent
-    if w == "/help":
+    if w in ("/help", "راهنما"):
         sent = await m.answer(texts.HELP_PAGES[0], parse_mode="HTML",
                               reply_markup=kb_help(1))
         _own(m, sent, uid)
@@ -1396,6 +1496,12 @@ async def fa_words(m: Message):
         _own(m, sent, uid)
         if act:
             db.kv_set(f"menu:{uid}", f"{sent.message_id}:{db.now()}")
+        return sent
+    # ⌨️ دستورهای فارسی بدون اسلش — همان منو، فقط تایپی
+    if state.active(uid) and w in WORD_VIEWS:
+        txt, kb = WORD_VIEWS[w](uid)
+        sent = await m.answer(txt, parse_mode="HTML", reply_markup=kb)
+        _own(m, sent, uid)
         return sent
     # ═══ 👑 ابزارهای متنی مالک (نگهداری) ═══
     if w == "ثبت" and arg:

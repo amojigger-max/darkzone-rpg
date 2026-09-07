@@ -17,7 +17,7 @@ def get(uid) -> dict:
 
 def ensure(uid, name=None, chat_id=None, username=None):
     db.ex("INSERT OR IGNORE INTO users(uid,name,joined,last_active,chat_id,username,money) "
-          "VALUES(?,?,?,?,?,?,1000)",
+          "VALUES(?,?,?,?,?,?,10000)",
           (uid, texts.esc(name or "")[:32], db.now(), db.now(), chat_id, username))
     db.ex("UPDATE users SET last_active=?, chat_id=COALESCE(?,chat_id) WHERE uid=?",
           (db.now(), chat_id, uid))
@@ -42,12 +42,12 @@ def enlist(uid, country: str, name: str) -> bool:
         if p["country"]:
             return False
         db.ex("UPDATE users SET country=?, "
-              "money=CASE WHEN money>0 THEN money ELSE 1000 END, "
+              "money=CASE WHEN money>0 THEN money ELSE 10000 END, "
               "name=CASE WHEN name='' OR name IS NULL THEN ? ELSE name END "
               "WHERE uid=?", (country, texts.esc(name)[:32], uid))
         return True
     db.ex("INSERT INTO users(uid,name,country,money,joined,last_active) VALUES(?,?,?,?,?,?)",
-          (uid, texts.esc(name)[:32], country, 1000, db.now(), db.now()))
+          (uid, texts.esc(name)[:32], country, 10000, db.now(), db.now()))
     return True
 
 

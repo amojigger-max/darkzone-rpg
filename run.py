@@ -83,6 +83,21 @@ async def world_loop(bot: Bot):
 
 async def events_loop(bot: Bot):
     """⚡ رویداد آرام گروه + خبرنامه‌ی خودکار هر ۱۰ دقیقه."""
+
+    def _tag_all(text: str) -> str:
+        """📣 خطاب به همه — تگ بازیکنان فعال دنیای جاری."""
+        with contextlib.suppress(Exception):
+            rows = db.q("SELECT uid, name FROM users "
+                        "WHERE country IS NOT NULL AND last_active > ? "
+                        "ORDER BY last_active DESC LIMIT 15",
+                        (db.now() - 3 * 86400,))
+            if rows:
+                import texts as _tx
+                tags = " ".join(_tx.mention(r["uid"], (r["name"] or "سرباز")[:16])
+                                for r in rows)
+                return f"📣 {tags}\n\n{text}"
+        return text
+
     await asyncio.sleep(35)
     print("⚡ events_loop alive", flush=True)
     while True:
@@ -96,7 +111,7 @@ async def events_loop(bot: Bot):
                 if (not db.kv_get("bl_off")
                         and now - int(db.kv_get("bl_last", "0")) >= 1800):
                     db.kv_set("bl_last", str(now))
-                    bl = events.bulletin()
+                    bl = _tag_all(events.bulletin())
                     with contextlib.suppress(Exception):
                         await bot.send_message(g, bl, parse_mode="HTML")
                 if not db.kv_get("ev_off"):
@@ -104,6 +119,7 @@ async def events_loop(bot: Bot):
                     if ev:
                         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
                         text, word = ev
+                        text = _tag_all(text)
                         kb = InlineKeyboardMarkup(inline_keyboard=[[
                             InlineKeyboardButton(text="⚡ شرکت در رویداد",
                                                  callback_data=f"evc:{word}")]])
@@ -154,20 +170,9 @@ async def main():
     import countries
     countries.init_items()
     # 🎁 پاداش تاج‌گذاری رهبر امریکا (گروه -1003614742240) — فقط یک بار
-    for g in db.list_games():
-        db.GAME.set(g)
-        with contextlib.suppress(Exception):
-            if not db.kv_get("bonus:8785446505"):
-                db.ex("UPDATE users SET money=money+100000, "
-                      "level=MAX(level,5), hp=100 "
-                      "WHERE uid=8785446505 AND country='us'")
-                db.kv_set("bonus:8785446505", "1")
-            # 💰 هدیه‌ی بزرگ: +۵۰ میلیون دلار — فقط یک بار
-            if not db.kv_get("bonus50m:8785446505"):
-                db.ex("UPDATE users SET money=money+50000000 "
-                      "WHERE uid=8785446505 AND country='us'")
-                db.kv_set("bonus50m:8785446505", "1")
-    db.GAME.set(None)
+    # 🎁 مهاجرت‌های یک‌باره‌ی دنیاها: هدیه‌ها + پول شروع مناسب
+    import migrations
+    migrations.run_all()
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
@@ -207,15 +212,37 @@ async def main():
     from aiogram import BaseMiddleware
     from aiogram.types import Message
 
+    _PM_WORLD: dict = {}
+
+    def _world_of(uid: int):
+        """💬 دنیای بازیکن برای پیوی — جایی که کشور دارد."""
+        hit = _PM_WORLD.get(uid)
+        if hit:
+            return hit
+        for g in db.list_games():
+            db.GAME.set(g)
+            if db.one("SELECT 1 FROM users WHERE uid=? AND country IS NOT NULL",
+                      (uid,)):
+                _PM_WORLD[uid] = g
+                return g
+        return None
+
+    handlers.WORLD_OF = _world_of
+
     class Guard(BaseMiddleware):
         async def __call__(self, handler, event, data):
             # 🌍 دنیای این پیام = همین گروه — همه‌چیز جدا
             chat = getattr(event, "chat", None)
             if chat is None:
                 chat = getattr(getattr(event, "message", None), "chat", None)
-            if chat is not None and getattr(chat, "id", 0) < 0:
-                db.GAME.set(chat.id)
+            cid = getattr(chat, "id", 0) if chat is not None else 0
             who = getattr(event, "from_user", None)
+            if cid < 0:
+                # 🌍 دنیای این پیام = همین گروه — همه‌چیز جدا
+                db.GAME.set(cid)
+            elif who is not None:
+                # 💬 پیوی: بازی در گروه، خرید و مدیریت در پیوی
+                db.GAME.set(_world_of(who.id))
             if who and who.id != config.OWNER_ID and _too_fast(
                     who.id, 0.5 if isinstance(event, Message) else 0.25):
                 # 🤫 گروه تمیز — سریع‌زدن‌ها بی‌سروصدا رد می‌شوند
