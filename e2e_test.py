@@ -167,6 +167,25 @@ async def main():
               "نقشه", "تعمیر", "جیره"):
         await run("msg", f"بی‌ثبت:{t[:10]}", handlers.fa_words(M(t, 99, "مهمان")))
 
+    # ═══ ۹. دور هفتم: تجارت، درآمد رایگان، رویداد دکمه‌ای ═══
+    await run("cb", "dl:", handlers.cb_daily(wrap_cb("dl:", 1)))
+    await run("cb", "wk:", handlers.cb_work(wrap_cb("wk:", 1)))
+    for what in ("trade", "howto", "events"):
+        await run("cb", f"mn:{what}", handlers.cb_menu(wrap_cb(f"mn:{what}", 1)))
+    for data in ("tb:wheat:5", "tb:gold:1", "tb:چرت:1"):
+        await run("cb", data, handlers.cb_tbuy(wrap_cb(data, 1)))
+    for data in ("ts:wheat:5", "ts:oil:1"):
+        await run("cb", data, handlers.cb_tsell(wrap_cb(data, 1)))
+    await run("cb", "tct:", handlers.cb_tcontract(wrap_cb("tct:", 1)))
+    await run("cb", "ct:de", handlers.cb_contract(wrap_cb("ct:de", 1)))
+    db.kv_set("ev_last:-100", "0")
+    ev = events.maybe_event(-100)
+    if ev:
+        await run("cb", f"evc:{ev[1]}", handlers.cb_evc(wrap_cb(f"evc:{ev[1]}", 1)))
+        await run("cb", f"evc دوباره", handlers.cb_evc(wrap_cb(f"evc:{ev[1]}", 2, "John")))
+    await run("cb", "ad:callup غیرمالک", handlers.cb_admin(wrap_cb("ad:callup", 1)))
+    await run("cb", "ad:reg غیرمالک", handlers.cb_admin(wrap_cb("ad:reg", 1)))
+
     # ═══ گزارش ═══
     print(f"\n═══ نتیجه‌ی E2E ═══")
     print(f"موفق: {DONE} | کرش: {len(FAILS)}")

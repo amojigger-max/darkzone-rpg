@@ -96,7 +96,7 @@ def tick() -> list:
                 if geo.occupy(ecid, city, cid):
                     out.append(f"🚩 {_flag(cid)} شهر <b>{city}</b>ِ {_flag(ecid)} را گرفت!")
     # ۲) اعلان جنگ تازه توسط یک رقیب بی‌جنگ — هرگز روی کشورِ رهبر‌دار
-    if len(wars) < MAX_AI_WARS and random.random() < 0.12:
+    if len(wars) < MAX_AI_WARS and random.random() < 0.06:
         free_pairs = [(a, b) for a, b in RIVALS
                       if not _in_war(a) and not _in_war(b)
                       and not _has_leader(a) and not _has_leader(b)
@@ -114,7 +114,7 @@ def tick() -> list:
             defense.ensure(a), defense.ensure(b)
             out.append(f"⚔️ {_flag(a)} به {_flag(b)} اعلان جنگ داد — جهان در آتش است!")
     # ۳) خبر اقتصادی مستقل
-    if random.random() < 0.25:
+    if random.random() < 0.08:
         w = economy.world()
         oil, usd, inf = w["oil"], w["dollar"], w["inflation"] * 100
         out.append(f"📡 بازار: نفت ${texts.fa(f'{oil:.0f}')} · "

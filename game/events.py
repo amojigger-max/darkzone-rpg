@@ -5,7 +5,7 @@ import random
 import db
 import texts
 
-MIN_GAP = 900
+MIN_GAP = 2400
 MAX_TRIES = 3
 
 # 💡 نکته‌ها — هر بار یکی، آرام و پیوسته
@@ -96,13 +96,14 @@ def game_alive(gid: int, minutes: int = 45) -> bool:
 
 
 EVENTS = [
-    ("📦 قرارداد تسلیحاتی رسید — ۱۰ دقیقه فرصت: بنویس «تحویل» — اولین نفر ۴۰۰ سکه می‌گیرد", "تحویل", 400),
-    ("🎖 فراخوان رزمی صادر شد — بنویس «اعزام» و ۱۲۰ XP بگیر", "اعزام", 0),
-    ("📻 رادیو بین‌المللی: پیام رمزی شنیده شد — بنویس «رمزگشایی»", "رمزگشایی", 200),
+    ("📦 قرارداد تسلیحاتی رسید — ۱۰ دقیقه فرصت: اولین دکمه‌بزن ۴۰۰ سکه می‌گیرد", "تحویل", 400),
+    ("🎖 فراخوان رزمی صادر شد — اولین دکمه‌بزن ۱۲۰ XP می‌گیرد", "اعزام", 0),
+    ("📻 رادیو بین‌المللی: پیام رمزی شنیده شد — رمز را باز کن", "رمزگشایی", 200),
 ]
 
 
 def maybe_event(chat_id):
+    """رویداد تازه برمی‌گرداند: (متن، کلمه‌ی دکمه) یا None."""
     st = db.jload(db.kv_get(f"ev:{chat_id}"), None)
     if st and st.get("active") and db.now() < st.get("deadline", 0):
         return None
@@ -114,7 +115,7 @@ def maybe_event(chat_id):
         dict(active=True, word=word, prize=prize, taker=None,
              deadline=db.now() + 120), ensure_ascii=False))
     db.kv_set(f"ev_last:{chat_id}", str(db.now()))
-    return text
+    return text, word
 
 
 def claim(chat_id, uid, word) -> str:

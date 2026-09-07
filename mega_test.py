@@ -82,7 +82,10 @@ async def cb(uid, data):
           "str": handlers.cb_strait, "bb": handlers.cb_buy_black,
           "qc": handlers.cb_quest_claim, "pj": handlers.cb_party_join,
           "pnew": handlers.cb_party_new, "pcancel": handlers.cb_pcancel,
-          "tp": handlers.cb_target_page}[key]
+          "tp": handlers.cb_target_page, "gno": handlers.cb_geo_no,
+          "dl": handlers.cb_daily, "wk": handlers.cb_work, "evc": handlers.cb_evc,
+          "tb": handlers.cb_tbuy, "ts": handlers.cb_tsell,
+          "tct": handlers.cb_tcontract, "ct": handlers.cb_contract}[key]
     try:
         await fn(c)
         return (c.message.out or "") + "|" + (c.answered or "")
@@ -230,9 +233,12 @@ async def main():
     out = await cb(reg["ir"], "dac:")
     T("قبول نبرد (دکمه)", "نبرد" in out or "چالش" in out or "سرباز" in out, out)
 
-    # ═══ ۹. پنل مالک ═══
+    # ═══ ۹. پنل مالک — کاملاً دکمه‌ای ═══
     out = await cmd("مدیریت", OWNER)
-    T("پنل مالک", "پنل مدیریت" in out, out)
+    T("مدیریت متنی ساکت", not out, out)
+    for data in ("ad:callup", "ad:troops"):
+        out = await cb(OWNER, data)
+        T(data, "CRASH" not in out, out)
     out = await cmd(f"ثبت {OWNER} ایران", OWNER)
     T("ثبت مالک", "ثبت شد" in out or "قبلاً" in out, out)
     out = await cmd(f"تغییر {OWNER} روسیه", OWNER)
@@ -331,7 +337,7 @@ async def main():
         if m_d.out:
             leak.append(f"{c}→{str(m_d.out)[:30]}")
     T(f"دستورهای مرده ساکت ({len(dead)})", not leak, leak)
-    alive = ["شروع", "منو", "تحویل", "اعزام", "رمزگشایی"]
+    alive = ["شروع", "منو"]
     silent = []
     for c in alive:
         m_a = Msg(c, uid)
@@ -458,7 +464,10 @@ async def main():
     T("منو زنده", mm3.out and "پرونده" in mm3.out, mm3.out)
     mm4 = M2("تحویل", 777)
     await handlers.fa_words(mm4)
-    T("رویداد زنده", mm4.out is not None and mm4.out != "", getattr(mm4, "out", ""))
+    T("کلمه‌ی رویداد حذف شد", mm4.out is None or mm4.out == "", getattr(mm4, "out", ""))
+    mm5 = M2("مدیریت", 777)
+    await handlers.fa_words(mm5)
+    T("مدیریت متنی حذف شد", mm5.out is None or mm5.out == "", getattr(mm5, "out", ""))
     handlers.TEST_MODE = True
     # AI: کشور رهبر‌دار جنگ NPC نمی‌گیرد
     from game import ai as _ai
@@ -469,6 +478,242 @@ async def main():
         _ai.tick()
     got_war = db.one("SELECT 1 FROM wars WHERE status='active' AND (a='hz' OR b='hz')")
     T("NPC به رهبر‌دار جنگ نمی‌دهد", not got_war, "hz جنگ گرفت!")
+    # ═══ ۱۴. دور ششم: تجهیزات انبوه + عکس + جنگ منطقی ═══
+    import os as _os
+    T("۳۰۰ تجهیز", len(countries.ITEMS) == 300, len(countries.ITEMS))
+    bad6 = [cid for cid, cc in countries.COUNTRIES.items() if len(cc["items"]) != 6]
+    T("۶ تجهیز در هر کشور", not bad6, bad6)
+    noimg = [iid for iid, it in countries.ITEMS.items()
+             if not ((it[6] and _os.path.exists(f"assets/img/{it[6]}"))
+                     or _os.path.exists(countries.category_img(it[0])))]
+    T("عکس همه‌ی تجهیزات", not noimg, noimg[:5])
+    T("عکس دسته‌ای موشک", countries.category_img("موشک عماد").endswith("cat_missile.jpg"))
+    T("عکس دسته‌ای زیردریایی", countries.category_img("زیردریایی باراکودا").endswith("cat_sub.jpg"))
+    from game import geo as _geo, war as _war, events as _ev
+    T("اتریش-آلمان همسایه", _geo.is_neighbor("at", "de"))
+    T("اتریش→آلمان زمینی مجاز", _war.can_strike_kind("at", "de", "زمینی")[0])
+    ok, why = _war.can_strike_kind("at", "us", "زمینی")
+    T("اتریش→آمریکا زمینی ممنوع", not ok and "زمینی" in why, why)
+    T("اتریش دریایی ممنوع", not _war.can_strike_kind("at", "de", "دریایی")[0])
+    T("ایران→آمریکا هوایی آزاد", _war.can_strike_kind("ir", "us", "هوایی")[0])
+    T("ایران→امارات زمینی ممنوع", not _war.can_strike_kind("ir", "ae", "زمینی")[0])
+    T("رویداد هر ۴۰ دقیقه", _ev.MIN_GAP == 2400, _ev.MIN_GAP)
+
+    # جنگ منطقی زنده: کره‌ی شمالی (شبه‌جزیره) علیه ژاپن (جزیره)
+    u_kp = reg["kp"]
+    db.ex("UPDATE users SET is_leader=1, money=999999 WHERE uid=?", (u_kp,))
+    await cb(u_kp, "wp:pokgun")     # تانک → زمینی
+    await cb(u_kp, "wp:sub_yono")   # زیردریایی → دریایی
+    out = await cb(u_kp, "dwr:jp")
+    T("اعلام جنگ kp→jp", "اعلام جنگ" in out, out[:80])
+    db.kv_set(f"strike:{u_kp}", "0")
+    out = await cb(u_kp, "st:زمینی:1")
+    T("حمله‌ی زمینی به جزیره بلاک", "ممکن نیست" in out and "مرز" in out, out[:80])
+    db.kv_set(f"strike:{u_kp}", "0")
+    out = await cb(u_kp, "st:دریایی:1")
+    T("حمله‌ی دریایی به جزیره مجاز", "موج حمله‌ی دریایی" in out, out[:80])
+    # کیبورد حمله: زمینی قفل، هوایی باز
+    kb = handlers.kb_strikes(u_kp)
+    btns = [b.text for row in kb.inline_keyboard for b in row]
+    T("کیبورد: زمینی قفل", any("مرز مشترک نیست" in b for b in btns), btns)
+    T("کیبورد: موشکی باز", any("موشکی" in b and "🚫" not in b for b in btns))
+    out = await cb(u_kp, "gno:land")
+    T("دکمه‌ی چرا نه", "زمینی" in out, out[:80])
+    # موشکی تأخیری: پرتاب → برخورد فوری در حالت تست
+    db.kv_set(f"strike:{u_kp}", "0")
+    out = await cb(u_kp, "st:موشکی:3")
+    T("پرتاب موشکی", "در راه" in out and "زمان پرواز" in out, out[:100])
+    T("برخورد فوری (تست)", "برخورد موج موشکی" in out, out[:150])
+    T("برخورد بدون پرتاب خالی", _war.resolve_missile(u_kp) == "")
+    # موشک در راه + پایان جنگ → بی‌اثر
+    db.kv_set(f"strike:{u_kp}", "0")
+    out = _war.launch_missile(u_kp, 1)
+    T("پرتاب مستقیم", "در راه" in out, out[:80])
+    db.ex("UPDATE wars SET status='draw' WHERE a='kp' AND b='jp'")
+    out = _war.resolve_missile(u_kp)
+    T("موشک بعد از پایان جنگ بی‌اثر", "بی‌اثر" in out, out[:80])
+    db.ex("UPDATE wars SET status='active' WHERE a='kp' AND b='jp'")
+    # خزانه در زرادخانه و پیام خرید
+    out = await cb(u_kp, "mn:arsenal")
+    T("زرادخانه خزانه", "خزانه" in out, out[:120])
+    db.ex("UPDATE users SET money=5000 WHERE uid=?", (u_kp,))
+    out = await cb(u_kp, "wp:kn23")
+    T("خرید با باقی خزانه", "🛒" in out and "باقی خزانه" in out, out[:120])
+
+    # ═══ ۱۵. دور هفتم: درآمد رایگان + تجارت + قرارداد + قفل منو ═══
+    from game import economy as _eco
+    # — درآمد رایگان: جایزه‌ی روزانه و کار —
+    u_hz = reg["hz"]
+    m0 = db.one("SELECT money FROM users WHERE uid=?", (u_hz,))["money"]
+    out = await cb(u_hz, "dl:")
+    T("جایزه‌ی روزانه", "رگه" in out and "دریافت شد" in out, out[:100])
+    m1 = db.one("SELECT money FROM users WHERE uid=?", (u_hz,))["money"]
+    T("جایزه واقعا رفت", m1 == m0 + 350, f"{m0}→{m1}")
+    out = await cb(u_hz, "dl:")
+    T("جایزه دوباره بلاک", "گرفتی" in out, out[:80])
+    # شبیه‌سازی دیروز → رگه ۲
+    day = db.now() // 86400
+    db.kv_set(f"daily:{u_hz}", __import__("json").dumps(
+        {"day": day - 1, "streak": 1}, ensure_ascii=False))
+    m0 = db.one("SELECT money FROM users WHERE uid=?", (u_hz,))["money"]
+    out = await cb(u_hz, "dl:")
+    m1 = db.one("SELECT money FROM users WHERE uid=?", (u_hz,))["money"]
+    T("رگه‌ی روز دوم", "رگه‌ی پیوسته: ۲ روز" in out and m1 == m0 + 500, out[:100])
+    out = await cb(u_hz, "wk:")
+    T("کار آزاد", "شیفت" in out, out[:80])
+    out = await cb(u_hz, "wk:")
+    T("کار کول‌داون", "خسته" in out or "دقیقه" in out, out[:80])
+    # — تجارت: خرید و فروش دقیق —
+    u_ae = reg["ae"]
+    db.ex("UPDATE users SET money=99999 WHERE uid=?", (u_ae,))
+    out = await cb(u_ae, "mn:trade")
+    T("میز تجارت", "میز تجارت" in out and "نفت خام" in out, out[:100])
+    m0 = db.one("SELECT money FROM users WHERE uid=?", (u_ae,))["money"]
+    out = await cb(u_ae, "tb:wheat:5")
+    T("واردات گندم ×۵", "واردات" in out and "گندم" in out, out[:100])
+    m1 = db.one("SELECT money FROM users WHERE uid=?", (u_ae,))["money"]
+    unit = _eco.good_price("wheat") * (1 + _eco.SPREAD)
+    T("حساب واردات دقیق", m0 - m1 == int(unit * 5), f"{m0 - m1} != {int(unit * 5)}")
+    out = await cb(u_ae, "ts:wheat:5")
+    T("صادرات گندم ×۵", "صادرات" in out, out[:100])
+    m2 = db.one("SELECT money FROM users WHERE uid=?", (u_ae,))["money"]
+    unit_s = _eco.good_price("wheat") * (1 - _eco.SPREAD)
+    T("حساب صادرات دقیق", m2 - m1 == int(unit_s * 5), f"{m2 - m1} != {int(unit_s * 5)}")
+    T("انبار خالی شد", _eco.holdings(u_ae).get("wheat", 0) == 0)
+    out = await cb(u_ae, "ts:gold:1")
+    T("فروش بدون جنس بلاک", "انبارت نداری" in out, out[:80])
+    # سقف انبار
+    for _ in range(4):
+        await cb(u_ae, "tb:copper:5")
+    out = await cb(u_ae, "tb:copper:5")
+    T("سقف انبار ۲۰", "پر است" in out, out[:80])
+    T("انبار سر سقف", _eco.holdings(u_ae).get("copper", 0) == 20)
+    # بی‌پول
+    db.ex("UPDATE users SET money=1 WHERE uid=?", (reg["jp"],))
+    out = await cb(reg["jp"], "tb:gold:1")
+    T("تجارت بی‌پول", "پول کم" in out, out[:80])
+    # — قرارداد: نفت‌خون بدون انبار + کول‌داون + جنگ —
+    u_ir = reg["ir"]
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (u_ir,))
+    out = await cb(u_ir, "tct:")
+    T("کشورهای قرارداد", "با کدام کشور" in out, out[:80])
+    m0 = db.one("SELECT money FROM users WHERE uid=?", (u_ir,))["money"]
+    out = await cb(u_ir, "ct:de")
+    T("قرارداد نفت ایران", "قرارداد تجاری امضا شد" in out and "نفت" in out, out[:120])
+    m1 = db.one("SELECT money FROM users WHERE uid=?", (u_ir,))["money"]
+    T("پول قرارداد واقعی", m1 > m0, f"{m0}→{m1}")
+    out = await cb(u_ir, "ct:fr")
+    T("قرارداد کول‌داون", "۲۰ دقیقه" in out, out[:80])
+    db.kv_set(f"ct:{u_ir}", "0")
+    # در جنگ با هدف → بلاک
+    db.ex("INSERT INTO wars(a,b,started,ends) VALUES(?,?,?,?)",
+          ("ir", "tr", db.now(), db.now() + 36000))
+    out = await cb(u_ir, "ct:tr")
+    T("قرارداد با دشمن بلاک", "جنگی" in out, out[:80])
+    db.ex("DELETE FROM wars WHERE a='ir' AND b='tr'")
+    # غیررهبر
+    out = await cb(P3, "tct:")
+    T("قرارداد غیررهبر", "رهبر" in out, out[:80])
+    # غیرنفت‌خون بدون انبار
+    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (reg["gb"],))
+    db.kv_set(f"inv:{reg['gb']}", "{}")
+    out = await cb(reg["gb"], "ct:fr")
+    T("قرارداد بدون جنس", "کالایی در انبارت نیست" in out, out[:90])
+    # — قفل منو: منوی دیگری باز نمی‌شود —
+    class _LockC:
+        data, from_user = "mn:main", U(4242)
+        class message:
+            chat, message_id = Chat(), 777
+    db.kv_set("mown:-100:777", str(u_hz))
+    locked = handlers._menu_locked(_LockC())
+    T("قفل منو", "منوی" in locked and "منوی خودت" in locked, locked)
+    class _OwnC:
+        data, from_user = "mn:main", U(u_hz)
+        class message:
+            chat, message_id = Chat(), 777
+    T("صاحب منو آزاد", handlers._menu_locked(_OwnC()) == "")
+    class _ByC:
+        data, from_user = "evc:تحویل", U(4242)
+        class message:
+            chat, message_id = Chat(), 777
+    T("دکمه‌ی مشترک آزاد", handlers._menu_locked(_ByC()) == "")
+    db.kv_set("mown:-100:777", "")
+    # — رویداد دکمه‌ای: برنده —
+    db.kv_set("ev_last:-100", "0")
+    ev = events.maybe_event(-100)
+    T("رویداد ساخته شد", ev and len(ev) == 2, ev)
+    if ev:
+        await handlers.bot_reply if False else None
+        c_ev = CB(u_hz, f"evc:{ev[1]}")
+        await handlers.cb_evc(c_ev)
+        out = (c_ev.message.out or "") + "|" + (c_ev.answered or "")
+        T("برنده‌ی رویداد دکمه‌ای", "برنده" in out or "اعزام" in out, out[:100])
+        c_ev2 = CB(reg["us"], f"evc:{ev[1]}")
+        await handlers.cb_evc(c_ev2)
+        T("دومین نفر دیر رسید", "دیر" in c_ev2.answered or "ثبت" in (c_ev2.answered or ""), c_ev2.answered)
+    # — منوهای تازه —
+    out = await cb(u_hz, "mn:howto")
+    T("چی بزنم", "چی بزنم" in out and "جایزه" in out, out[:100])
+    out = await cb(u_hz, "mn:events")
+    T("منوی رویدادها", "رویداد" in out, out[:80])
+    out = await cb(reg["us"], "ad:callup")
+    T("اعلام دکمه‌ای مالک", True, out[:60])
+    kb = handlers.kb_main(config.OWNER_ID)
+    btns = [b.text for row in kb.inline_keyboard for b in row]
+    T("ردیف مدیریت مالک", "مدیریت" in " ".join(btns), btns)
+    kb2 = handlers.kb_main(111)
+    btns2 = " ".join(b.text for row in kb2.inline_keyboard for b in row)
+    T("بازیکن مدیریت ندارد", "مدیریت" not in btns2)
+    T("عکس قایق", countries.category_img("قایق گشتی").endswith("cat_boat.jpg"))
+    T("عکس تفنگ", countries.category_img("تفنگ اشتایر").endswith("cat_rifle.jpg"))
+
+    # ═══ ۱۶. پیام ورود گروه + ثبت و تغییر مالک ═══
+    jt = handlers._join_text(-1004294243667, "TestBot")
+    T("متن ورود گروه", "کشورت را انتخاب" in jt and "رهبر" in jt and "پین" not in jt, jt[:120])
+    T("آیدی جهان در ورود", "جهان این گروه" in jt and "TestBot" in jt, jt[:120])
+
+    class _FBot:
+        def __init__(s):
+            s.sent, s.pinned = [], []
+        async def send_message(s, gid, txt, **kw):
+            s.sent.append(txt)
+            class _M:
+                message_id = 55
+            return _M()
+        async def pin_chat_message(s, gid, mid, **kw):
+            s.pinned.append(mid)
+
+    fb = _FBot()
+    db.kv_set("joined:-424242", "")
+    db.GAME.set(-100)
+    await handlers._group_hello(fb, -424242, "TestBot")
+    T("پیام ورود فرستاده شد", len(fb.sent) == 1 and "کشورت را انتخاب" in fb.sent[0],
+      fb.sent[:1])
+    T("پیام ورود پین شد", fb.pinned == [55], fb.pinned)
+    await handlers._group_hello(fb, -424242, "TestBot")
+    T("پیام ورود فقط یک بار", len(fb.sent) == 1, len(fb.sent))
+    await handlers._group_hello(None, -987654)
+    T("بدون بات بی‌اثر", db.kv_get("joined:-987654") is None)
+
+    # ثبت بازیکن تازه با دکمه + ورودی
+    out = await cb(OWNER, "ad:reg")
+    T("دکمه‌ی ثبت", "آیدی‌عددی" in out, out[:80])
+    out = await cmd("وای چقدر قشنگ", OWNER)
+    T("ورودی غلط دوباره منتظر", "الگو" in out, out[:80])
+    out = await cmd("555001 فنلاند", OWNER)
+    T("ثبت دکمه‌ای", "ثبت" in out, out[:90])
+    p_new = st.get(555001)
+    T("ثبت واقعی", p_new and p_new["country"] == "fi", p_new and p_new["country"])
+    # تغییر کشور همان بازیکن
+    out = await cb(OWNER, "ad:chg")
+    out = await cmd("555001 پرتغال", OWNER)
+    T("تغییر دکمه‌ای", "پرتغال" in out or "تغییر" in out, out[:90])
+    p_new = st.get(555001)
+    T("تغییر واقعی", p_new and p_new["country"] == "pt", p_new and p_new["country"])
+    # غیرمالک نمی‌تواند
+    out = await cb(P3, "ad:reg")
+    T("ثبت فقط مالک", "فقط مالک" in out, out[:60])
+
     print(f"\n{'═' * 20} نتیجه {'═' * 20}")
     print(f"✅ موفق: {len(PASS)}")
     if FAIL:

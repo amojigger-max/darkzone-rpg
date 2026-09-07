@@ -7,6 +7,7 @@
 🚜 زمینی → پیشروی جبهه = اشغال شهر
 پدافند دشمن + اتحادها + دولت هوشمند (پاسخ خودکار) همه واقعی‌اند.
 """
+import json
 import random
 
 import db
@@ -380,32 +381,67 @@ def _enemy(cid: str, w) -> str:
     return w["b"] if w["a"] == cid else w["a"]
 
 
-def strike(uid, kind: str, count: int = 1) -> str:
-    """رهبر: حمله‌ی خاص با تعداد — هر شلیک جدا دفع یا برخورد می‌خورد."""
+MISSILE_FLIGHT = 30  # ⏱ ثانیه — زمان پرواز موشک تا برخورد
+
+
+def can_strike_kind(a: str, b: str, kind: str):
+    """✔️ چک جغرافیایی نوع حمله.
+
+    زمینی → مرز زمینی مشترک لازم · دریایی → هر دو کشور ساحلی · بقیه آزاد.
+    خروجی: (امکان, دلیل خطا)
+    """
+    if kind == "زمینی" and not geo.is_neighbor(a, b):
+        return False, (f"🚫 حمله‌ی زمینی ممکن نیست — {countries.COUNTRIES[a]['name']} و "
+                       f"{countries.COUNTRIES[b]['name']} مرز زمینی مشترک ندارند. "
+                       "حمله‌ی هوایی، موشکی یا پهپادی بزن.")
+    if kind == "دریایی" and not (geo.coastal(a) and geo.coastal(b)):
+        who = [countries.COUNTRIES[x]["name"] for x in (a, b) if not geo.coastal(x)]
+        return False, (f"🚫 حمله‌ی دریایی ممکن نیست — {' و '.join(who)} "
+                       "به آب‌های آزاد دسترسی ندارد.")
+    return True, ""
+
+
+def _strike_precheck(uid, kind: str, count: int):
+    """اعتبارسنجی مشترک همه‌ی حمله‌ها.
+
+    برنده: (ctx, None) — کول‌داون، مهمات و کوئست مصرف شده.
+    بازنده: (None, پیام خطا) — هیچ چیز مصرف نشده.
+    """
     p = state.active(uid)
     if not p or not p["is_leader"]:
-        return "👑 فقط رهبر کشور."
+        return None, "👑 فقط رهبر کشور."
     w = war_of(p["country"])
     if not w:
-        return "🕊 کشورت در جنگ نیست."
+        return None, "🕊 کشورت در جنگ نیست."
     if db.now() - int(db.kv_get(f"strike:{uid}", "0")) < 45:
-        return "⏳ ۴۵ ثانیه بین موج حمله."
+        return None, "⏳ ۴۵ ثانیه بین موج حمله."
+    ecid = _enemy(p["country"], w)
+    ok, why = can_strike_kind(p["country"], ecid, kind)
+    if not ok:
+        return None, why
     _init_ammo(w)
     ammo = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
     if ammo <= 0:
-        return "🎯 مهمات جنگ تمام شد — جبهه را از منو ببین. صلح یا شکست."
-    db.kv_set(f"strike:{uid}", str(db.now()))
-    from game import quests as _q
-    _q.on_event(uid, "حمله")
-    count = max(1, min(5, count, ammo))
+        return None, "🎯 مهمات جنگ تمام شد — جبهه را از منو ببین. صلح یا شکست."
     rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
     have = [r for r in rows if kind_of(r["iid"]) == kind and r["dur"] > 15]
     if not have:
-        return f"⛔ تجهیزات <b>{kind}</b> نداری — زرادخانه‌ات را کامل کن (منو)"
+        return None, f"⛔ تجهیزات <b>{kind}</b> نداری — زرادخانه‌ات را کامل کن (منو)"
+    count = max(1, min(5, count, ammo))
+    # مصرف: کول‌داون + کوئست + مهمات (موشک‌ها واقعاً شلیک شدند)
+    db.kv_set(f"strike:{uid}", str(db.now()))
+    from game import quests as _q
+    _q.on_event(uid, "حمله")
+    db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
+    return {"p": p, "w": w, "count": count, "have": have, "ecid": ecid}, None
+
+
+def _resolve_wave(uid, kind: str, ctx, title=None) -> str:
+    """حل یک موج حمله — برخورد، فرسایش، امتیاز، شهر، ضدحمله، پاسخ جهان."""
+    p, w, count, have, ecid = ctx["p"], ctx["w"], ctx["count"], ctx["have"], ctx["ecid"]
     best = max(have, key=lambda r: countries.ITEMS[r["iid"]][3] * r["dur"] // 100
                * military._lvl_mult(uid, r["iid"]) // 100)
     it = countries.ITEMS[best["iid"]]
-    ecid = _enemy(p["country"], w)
     ec = countries.COUNTRIES[ecid]
     # 🛡 سپر ملی دشمن — لایه‌ی مقابل + جنگ الکترونیک (فرسایش واقعی)
     chance, dmg_mult, layer, dlevel = defense.absorb(ecid, kind, count)
@@ -420,9 +456,9 @@ def strike(uid, kind: str, count: int = 1) -> str:
         spec_mark = f" 🎖 تخصص {countries.COUNTRIES[p['country']]['name']} فعال!"
         spec_mult = 1 + mpct / 100
     t = texts
-    lines = [t.hdr(f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
-                                          "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
-             f"{ec['flag']} {ec['name']} ← {str(count).translate(FA_D)}× {it[0]} {it[1]}{spec_mark}",
+    lines = [t.hdr(title or f"موج حمله‌ی {kind}", {"موشکی": "🚀", "هوایی": "✈️", "دریایی": "🚢",
+                                                   "زمینی": "🚜", "پهپادی": "🛩"}.get(kind, "💥")),
+             f"{ec['flag']} {ec['name']} ← {t.fa(count)}× {it[0]} {it[1]}{spec_mark}",
              f"🛡 {layer} دشمن: سطح {texts.fa(dlevel)}",
              t.K]
     score_add = 0
@@ -456,9 +492,9 @@ def strike(uid, kind: str, count: int = 1) -> str:
                    (uid, best["iid"]))
     if d_now:
         lines.append(f"🛠 دوام {it[0]}: {texts.fa(d_now['dur'])}٪")
-    # 🎯 مصرف مهمات
-    db.kv_set(_ammo_key(w, p["country"]), str(ammo - count))
-    lines.append(f"🎯 مهمات کشورت: {texts.fa(ammo - count)}/{texts.fa(_ammo_total(p['country']))}")
+    # 🎯 موجودی مهمات
+    cur = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
+    lines.append(f"🎯 مهمات کشورت: {texts.fa(cur)}/{texts.fa(_ammo_total(p['country']))}")
     # ضدحمله‌ی مستقیم به فرمانده
     if random.random() < 0.4 and score_add:
         edmg = random.randint(8, 25)
@@ -469,6 +505,65 @@ def strike(uid, kind: str, count: int = 1) -> str:
     for ln in ai.respond_to_strike(p["country"], ecid, kind, score_add):
         lines.append(ln)
     return "\n".join(lines)
+
+
+def strike(uid, kind: str, count: int = 1) -> str:
+    """رهبر: حمله‌ی فوری (غیرموشکی) — اعتبارسنجی و حل در یک گام."""
+    ctx, err = _strike_precheck(uid, kind, count)
+    if err:
+        return err
+    return _resolve_wave(uid, kind, ctx)
+
+
+def launch_missile(uid, count: int = 1) -> str:
+    """پرتاب موج موشکی — برخورد بعد از زمان پرواز.
+
+    دشمن در این فاصله فرصت دارد سپر ملی‌اش را تقویت کند؛
+    رهگیری با پدافندِ لحظه‌ی برخورد سنجیده می‌شود.
+    """
+    ctx, err = _strike_precheck(uid, "موشکی", count)
+    if err:
+        return err
+    p, w = ctx["p"], ctx["w"]
+    ecid = ctx["ecid"]
+    db.kv_set(f"mstrike:{uid}", json.dumps(
+        {"war": w["id"], "count": ctx["count"], "ts": db.now()}))
+    ec = countries.COUNTRIES[ecid]
+    cur = int(db.kv_get(_ammo_key(w, p["country"]), "0") or 0)
+    t = texts
+    return "\n".join([
+        t.hdr("موج موشکی در راه", "🚀"),
+        f"{ec['flag']} {ec['name']} ← {t.fa(ctx['count'])}× موشک 🚀",
+        f"⏱ زمان پرواز: {t.fa(MISSILE_FLIGHT)} ثانیه",
+        f"🎯 مهمات کشورت: {t.fa(cur)}/{t.fa(_ammo_total(p['country']))}",
+        t.K,
+        f"🛡 رهبر {ec['name']}: همین حالا سپر ملی را تقویت کنید — "
+        "رهگیری در لحظه‌ی برخورد حساب می‌شود!",
+    ])
+
+
+def resolve_missile(uid) -> str:
+    """برخورد موج موشکیِ در راه — با پدافندِ همین لحظه."""
+    raw = db.kv_get(f"mstrike:{uid}")
+    if not raw:
+        return ""
+    db.kv_set(f"mstrike:{uid}", "")
+    d = db.jload(raw)
+    if not d or db.now() - int(d.get("ts", 0)) > 120:
+        return ""
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        return ""
+    w = db.one("SELECT * FROM wars WHERE id=? AND status='active'", (d["war"],))
+    if not w or p["country"] not in (w["a"], w["b"]):
+        return "🕊 موج موشکی بی‌اثر ماند — جنگ در این فاصله تمام شد."
+    rows = db.q("SELECT n.iid, n.dur FROM inventory n WHERE n.uid=?", (uid,))
+    have = [r for r in rows if kind_of(r["iid"]) == "موشکی" and r["dur"] > 15]
+    if not have:
+        return "⛔ موج موشکی متوقف شد — پرتابگر سالم نداری."
+    ctx = {"p": p, "w": w, "count": max(1, min(5, int(d.get("count", 1)))),
+           "have": have, "ecid": _enemy(p["country"], w)}
+    return _resolve_wave(uid, "موشکی", ctx, title="برخورد موج موشکی")
 
 
 def settle():

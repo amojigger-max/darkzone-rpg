@@ -23,7 +23,7 @@ NEWS_TMPL = [
 
 def _news(w) -> str | None:
     import random
-    if random.random() > 0.08:          # هر تیک ۶۰ ثانیه → ~۲۰ دقیقه یک خبر
+    if random.random() > 0.04:          # هر تیک ۶۰ ثانیه → ~۴۰ دقیقه یک خبر
         return None
     tpl, key = random.choice(NEWS_TMPL)
     import texts
@@ -66,7 +66,7 @@ async def world_loop(bot: Bot):
                     with contextlib.suppress(Exception):
                         await bot.send_message(g, line, parse_mode="HTML")
                 # خبرگزاری تورم
-                if w["inflation"] > 1.0 and db.now() % 600 < 70:
+                if w["inflation"] > 1.0 and db.now() % 3600 < 70:
                     with contextlib.suppress(Exception):
                         import texts as _t
                         await bot.send_message(
@@ -94,7 +94,7 @@ async def events_loop(bot: Bot):
                 db.GAME.set(g)
                 # 📰 خبرنامه‌ی هر ۱۰ دقیقه — قابل تنظیم: «تنظیم اخبار»
                 if (not db.kv_get("bl_off")
-                        and now - int(db.kv_get("bl_last", "0")) >= 600):
+                        and now - int(db.kv_get("bl_last", "0")) >= 1800):
                     db.kv_set("bl_last", str(now))
                     bl = events.bulletin()
                     with contextlib.suppress(Exception):
@@ -102,8 +102,14 @@ async def events_loop(bot: Bot):
                 if not db.kv_get("ev_off"):
                     ev = events.maybe_event(g)
                     if ev:
+                        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+                        text, word = ev
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[
+                            InlineKeyboardButton(text="⚡ شرکت در رویداد",
+                                                 callback_data=f"evc:{word}")]])
                         with contextlib.suppress(Exception):
-                            await bot.send_message(g, ev, parse_mode="HTML")
+                            await bot.send_message(g, text, parse_mode="HTML",
+                                                   reply_markup=kb)
             await asyncio.sleep(45)
         except Exception:
             with contextlib.suppress(Exception):

@@ -1,4 +1,5 @@
 """👤 جنگ جهانی — بازیکن: شهروند → سرباز → فرمانده."""
+import json
 import db
 import texts
 
@@ -184,3 +185,60 @@ def ration(uid) -> str:
     return (f"🍞 جیره‌ی روزانه: {cur}{oil_note}\n"
             f"🔥 زنجیره‌ی حضور: {texts.fa(streak)} روز پیوسته\n"
             f"خزانه: {texts.money(p['country'], get(uid)['money'])}{tax_note}{bonus}")
+
+
+def daily(uid) -> str:
+    """🎁 جایزه‌ی روزانه با رگه‌ی پیوسته — هر روز بیا، بیشتر ببر."""
+    p = active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    t = texts
+    day = db.now() // 86400
+    st = db.jload(db.kv_get(f"daily:{uid}"), None) or {}
+    last, streak = st.get("day"), int(st.get("streak", 0))
+    if last == day:
+        nxt = 200 + 150 * min(streak + 1, 7)
+        return "\n".join([
+            t.hdr("جایزه‌ی روزانه", "🎁"),
+            f"⏳ امروز جایزه‌ات را گرفتی — 🔥 رگه: {t.fa(streak)} روز",
+            f"💰 فردا: {t.money(p['country'], nxt)}",
+            "هر روز بیا تا رگه نشکند!",
+        ])
+    streak = streak + 1 if last == day - 1 else 1
+    prize = 200 + 150 * min(streak, 7)
+    db.ex("UPDATE users SET money=money+? WHERE uid=?", (prize, uid))
+    db.kv_set(f"daily:{uid}", json.dumps({"day": day, "streak": streak},
+                                         ensure_ascii=False))
+    lines = [t.hdr("جایزه‌ی روزانه", "🎁"),
+             f"🔥 رگه‌ی پیوسته: {t.fa(streak)} روز",
+             f"💰 +{t.money(p['country'], prize)} دریافت شد"]
+    if last is not None and last < day - 1:
+        lines.append("⚠️ رگه‌ات قطع شده بود — از یک شروع شد")
+    if streak >= 7:
+        lines.append("👑 هفته‌ی کامل! حداکثر جایزه قفل شد")
+    lines.append(f"📅 فردا: {t.money(p['country'], 200 + 150 * min(streak + 1, 7))}")
+    return "\n".join(lines)
+
+
+WORK_CD = 300          # ⏱ هر ۵ دقیقه یک کار — درآمد رایگانِ همیشه‌در-دسترس
+
+
+def work(uid) -> str:
+    """🔨 کار کن و پول بگیر — رایگان، همیشه در جریان بازی."""
+    p = active(uid)
+    if not p:
+        return "⛔ اول «شروع»"
+    t = texts
+    if db.now() - int(db.kv_get(f"work:{uid}", "0")) < WORK_CD:
+        left = WORK_CD - (db.now() - int(db.kv_get(f"work:{uid}", "0")))
+        return (f"⏳ خسته‌ای! {t.fa(max(60, (left + 59) // 60))} دقیقه دیگر "
+                "دوباره کار کن.")
+    db.kv_set(f"work:{uid}", str(db.now()))
+    pay = 120 + p["level"] * 10
+    db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
+    return "\n".join([
+        t.hdr("شیفت کاری تمام شد", "🔨"),
+        f"💪 کار کردی، پول گرفتی: +{t.money(p['country'], pay)}",
+        f"💼 خزانه: {t.money(p['country'], p['money'] + pay)}",
+        f"⏱ کار بعدی: {t.fa(WORK_CD // 60)} دقیقه دیگر — سطح بالاتر = پول بیشتر",
+    ])

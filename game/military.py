@@ -49,7 +49,8 @@ def arsenal(uid) -> str:
     c = countries.COUNTRIES[p["country"]]
     sp = countries.spec_of(p["country"])
     lines = [texts.hdr(f"زرادخانه {c['name']}", "🛒"),
-             f"🎖 تخصص کشور: {sp[2]} — +{texts.fa(sp[1])}٪ در حمله‌ی {sp[0]}", ""]
+             f"🎖 تخصص کشور: {sp[2]} — +{texts.fa(sp[1])}٪ در حمله‌ی {sp[0]}",
+             f"💰 خزانه: {texts.money(p['country'], p['money'])}", ""]
     from game import economy
     for iid in c["items"]:
         it = countries.ITEMS[iid]
@@ -95,7 +96,8 @@ def buy(uid, iid: str, qty: int = 1) -> str:
     quests.on_event(uid, "خرید")
     t = texts
     return (f"🛒 <b>{it[0]}</b> {it[1]} ×{t.fa(qty)} خریداری شد — "
-            f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪")
+            f"موجودی: {t.fa(have + qty)} · دوام ۱۰۰٪\n"
+            f"💰 باقی خزانه: {t.money(p['country'], p['money'] - cost)}")
 
 
 def black_sample(uid) -> list:

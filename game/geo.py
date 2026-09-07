@@ -164,3 +164,58 @@ def country_map(cid: str) -> str:
         mark = "🚩 اشغال‌شده" if city in occ else "🟢 آزاد"
         lines.append(f"▫️ {city} — {mark}")
     return "\n".join(lines)
+
+# ═══ مرزهای زمینی مشترک (جفت‌های متقارن؛ یک‌طرفه کافی است) ═══
+_NEIGHBOR_PAIRS = [
+    ("ir", "iq"), ("ir", "tr"), ("ir", "pk"), ("ir", "az"),
+    ("us", "mx"), ("us", "ca"),
+    ("ru", "cn"), ("ru", "kz"), ("ru", "ua"), ("ru", "kp"), ("ru", "fi"),
+    ("cn", "in"), ("cn", "pk"), ("cn", "kp"), ("cn", "vn"), ("cn", "kz"),
+    ("de", "fr"), ("de", "at"), ("de", "ch"), ("de", "pl"), ("de", "dk"), ("de", "nl"), ("de", "be"),
+    ("fr", "es"), ("fr", "it"), ("fr", "ch"), ("fr", "be"),
+    ("tr", "iq"), ("tr", "sy"), ("tr", "az"), ("tr", "gr"),
+    ("il", "sy"), ("il", "eg"),
+    ("kp", "kr"),
+    ("in", "pk"),
+    ("sa", "iq"), ("sa", "kw"), ("sa", "ae"), ("sa", "qa"),
+    ("ae", "qa"),
+    ("iq", "sy"), ("iq", "kw"),
+    ("sy", "hz"),
+    ("hz", "il"),
+    ("ua", "pl"),
+    ("it", "ch"), ("it", "at"),
+    ("br", "ar"),
+    ("id", "my"), ("my", "th"),
+    ("es", "pt"),
+    ("nl", "be"), ("fr", "nl"), ("be", "de"),
+    ("pl", "ua"),
+    ("ch", "at"),
+    ("kz", "cn"),
+    ("at", "it"),
+]
+
+# cid → مجموعه‌ی همسایه‌های زمینی
+NEIGHBORS = {}
+for _a, _b in _NEIGHBOR_PAIRS:
+    NEIGHBORS.setdefault(_a, set()).add(_b)
+    NEIGHBORS.setdefault(_b, set()).add(_a)
+
+# ═══ کشورهای دارای دسترسی به آب‌های آزاد (برای حمله‌ی دریایی) ═══
+# جزیره‌ای‌ها و ساحلی‌ها؛ فقط at (اتریش) و ch (سوئیس) زمین‌بسته‌اند.
+COASTAL = {
+    "ir", "us", "ru", "cn", "de", "gb", "fr", "tr", "il", "kp", "kr", "jp",
+    "in", "pk", "sa", "ae", "iq", "sy", "ua", "it", "hz", "br", "mx", "ar",
+    "ca", "au", "eg", "za", "ng", "id", "my", "th", "vn", "ph", "es", "pt",
+    "nl", "be", "se", "no", "dk", "fi", "pl", "gr", "kz", "az", "qa", "kw",
+}
+
+
+def is_neighbor(a: str, b: str) -> bool:
+    """آیا دو کشور مرز زمینی مشترک دارند؟"""
+    return b in NEIGHBORS.get(a, ())
+
+
+def coastal(cid: str) -> bool:
+    """آیا کشور به دریای آزاد دسترسی دارد؟"""
+    return cid in COASTAL
+

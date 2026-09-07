@@ -1,5 +1,6 @@
 """🎮 جنگ جهانی — رابط کاربری: کاملاً فارسی، دکمه‌ای، تمیز."""
 
+import asyncio
 import contextlib
 import os
 import time
@@ -24,11 +25,48 @@ def handlers_bot():
 
 # 🎛 فقط همین دستورهای متنی زنده‌اند — همه‌چیز دیگر از «منو»
 TEST_MODE = False
+bot = None  # ← run.py تزریق می‌کند
+# دکمه‌هایی که هر کسی می‌تواند بزند (پاسخ اتحاد/صلح/نبرد/رویداد/چرا-نه)
+MENU_BYPASS = ("aac:", "pac:", "dac:", "gno:", "evc:")
+
+
+def _own(c, sent, uid):
+    """ثبت مالک منوی تازه‌فرستاده‌شده — دکمه‌هایش فقط برای خودش."""
+    with contextlib.suppress(Exception):
+        db.kv_set(f"mown:{c.chat.id}:{sent.message_id}", str(uid))
+
+
+def _menu_locked(c) -> str:
+    """اگر دکمه‌ی منوی دیگری باشد، پیام رد؛ وگرنه خالی."""
+    d = c.data or ""
+    if d.startswith(MENU_BYPASS):
+        return ""
+    try:
+        key = f"mown:{c.message.chat.id}:{c.message.message_id}"
+    except AttributeError:
+        return ""
+    owner = db.kv_get(key)
+    if owner and str(owner) != str(c.from_user.id):
+        u = state.get(int(owner))
+        nm = (u["name"] if u else "") or "بازیکن دیگر"
+        return f"⛔ این منوی {nm} است — خودت بنویس «منو» تا منوی خودت بیاید."
+    return ""
+
+
+@router.callback_query.middleware()
+async def menu_lock_mw(handler, event: CallbackQuery, data):
+    """🔒 هیچ‌کس منوی دیگری را کنترل نمی‌کند."""
+    msg = _menu_locked(event)
+    if msg:
+        with contextlib.suppress(Exception):
+            await event.answer(msg[:180])
+        return
+    return await handler(event, data)
+
+
 TEXT_ALLOWED = {
-    "شروع", "منو",
-    "تحویل", "اعزام", "رمزگشایی",               # رویدادهای گروهی
-    "رهبر", "ثبت", "تغییر", "تنظیم",             # مالک
-    "مدیریت", "ادمین", "اعلام", "سربازها", "توزیع",
+    "شروع", "منو",                               # بازی: فقط همین دو
+    "رهبر", "ثبت", "تغییر", "تنظیم",             # ابزار مالک
 }
 bot: Bot = None
 
@@ -71,6 +109,10 @@ def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 آمار جهان", callback_data="ad:stats"),
          InlineKeyboardButton(text="👥 بازیکنان", callback_data="ad:players")],
+        [InlineKeyboardButton(text="📣 اعلام فراخوان", callback_data="ad:callup"),
+         InlineKeyboardButton(text="🎖 سربازها", callback_data="ad:troops")],
+        [InlineKeyboardButton(text="🧑‍✈️ ثبت بازیکن", callback_data="ad:reg"),
+         InlineKeyboardButton(text="🔄 تغییر کشور", callback_data="ad:chg")],
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
@@ -212,6 +254,21 @@ async def cb_admin(c: CallbackQuery):
         lines.append("")
         lines.append(texts.DASH)
         await _edit(c, "\n".join(lines), kb_admin())
+    elif what in ("reg", "chg"):
+        _pend_set(config.OWNER_ID, c.message.chat.id,
+                  "areg" if what == "reg" else "achg")
+        await _edit(c, "\n".join([
+            texts.hdr("ثبت یا تغییر کشور بازیکن" if what == "reg"
+                      else "تغییر کشور بازیکن", "🛠"), "",
+            "✍️ همین الگو را بفرست: <code>آیدی‌عددی نام‌کشور</code>",
+            "مثال: <code>123456 ایران</code>",
+            "", "«لغو» برای انصراف"]), kb_admin())
+    elif what in ("callup", "troops"):
+        for part in _admin_callup_parts():
+            with contextlib.suppress(Exception):
+                await c.message.answer(part, parse_mode="HTML")
+        await c.answer("📣 فراخوان فرستاده شد")
+        return
     await c.answer()
 
 
@@ -251,13 +308,67 @@ def kb_countries(page=0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_main() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+def kb_main(uid=None) -> InlineKeyboardMarkup:
+    """🎛 منوی اصلی — برای مالک ردیف مدیریت هم دارد."""
+    rows = [
         [InlineKeyboardButton(text="🪖 نظامی", callback_data="mn:mil"),
          InlineKeyboardButton(text="🏛 سیاست", callback_data="mn:pol")],
         [InlineKeyboardButton(text="🌍 جهان", callback_data="mn:world"),
          InlineKeyboardButton(text="👤 پروفایل", callback_data="mn:me")],
-        [InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]])
+        [InlineKeyboardButton(text="💼 تجارت", callback_data="mn:trade"),
+         InlineKeyboardButton(text="🧭 چی بزنم؟", callback_data="mn:howto")],
+        [InlineKeyboardButton(text="🎁 جایزه‌ی روزانه", callback_data="dl:"),
+         InlineKeyboardButton(text="🔨 کار کن", callback_data="wk:")],
+        [InlineKeyboardButton(text="⚡ رویدادها", callback_data="mn:events"),
+         InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
+    if uid == config.OWNER_ID:
+        rows.append([InlineKeyboardButton(text="🛠 مدیریت", callback_data="ad:stats")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_trade(uid) -> InlineKeyboardMarkup:
+    """💼 میز تجارت — + واردات (خرید) · − صادرات (فروش)."""
+    rows = []
+    for gid, nm, em, _ in economy.GOODS:
+        rows.append([
+            InlineKeyboardButton(text=f"{em} {nm} +۱", callback_data=f"tb:{gid}:1"),
+            InlineKeyboardButton(text="+۵", callback_data=f"tb:{gid}:5"),
+            InlineKeyboardButton(text="−۱", callback_data=f"ts:{gid}:1"),
+            InlineKeyboardButton(text="−۵", callback_data=f"ts:{gid}:5")])
+    p = state.active(uid)
+    if p and p["is_leader"]:
+        rows.append([InlineKeyboardButton(text="📜 قرارداد تجاری", callback_data="tct:")])
+    rows.append([InlineKeyboardButton(text="💼 میز تجارت", callback_data="mn:trade"),
+                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _howto(uid) -> str:
+    """🧭 راهنمای کوچک هوشمند — بر اساس وضعیت بازیکن می‌گوید چی بزن."""
+    p = state.active(uid)
+    lines = [texts.hdr("چی بزنم؟", "🧭")]
+    if not p:
+        lines += ["", "🗝 تازه‌ای؟ از منوی شروع کشورت را انتخاب کن.",
+                  "بعد هر روز: 🎁 جایزه → 🔨 کار → 🎯 مأموریت."]
+        return "\n".join(lines)
+    lines += [
+        "",
+        "💰 پول رایگان هر روز:",
+        "▫️ 🎁 جایزه‌ی روزانه — با رگه‌ی پیوسته بیشتر می‌شود",
+        "▫️ 🔨 کار کن — هر ۵ دقیقه یک شیفت",
+        "▫️ 🎯 مأموریت روزانه — سه هدف، جایزه نقدی",
+        "▫️ ⚡ رویداد گروهی — هر ۴۰ دقیقه، اولین دکمه‌بزن برنده",
+        "",
+        "📈 پول بیشتر؟ 💼 تجارت — ارزان وارد کن، گران صادر کن؛",
+        "   📜 قرارداد تجاری (رهبر) — پاداش ۱۵ تا ۴۵ درصد.",
+    ]
+    if p["is_leader"]:
+        w = war.war_of(p["country"])
+        lines.append("👑 رهبری: " + ("⚔️ در جنگی — 🪖 نظامی → فرماندهی جنگ"
+                                    if w else "🕊 در صلحی — 🛡 پدافند را قوی نگه دار"))
+    else:
+        lines.append("🪖 سربازی: ⚔️ رزم بزن، سطح بگیر — رهبر بگیری، فرمان میدهی")
+    return "\n".join(lines)
 
 
 def kb_mil() -> InlineKeyboardMarkup:
@@ -382,22 +493,31 @@ def kb_targets(uid, action, page=0) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def kb_strikes() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 موشکی ۱×", callback_data="st:موشکی:1"),
-         InlineKeyboardButton(text="🚀 موشکی ۳×", callback_data="st:موشکی:3"),
-         InlineKeyboardButton(text="🚀 موشکی ۵×", callback_data="st:موشکی:5")],
-        [InlineKeyboardButton(text="✈️ هوایی ۱×", callback_data="st:هوایی:1"),
-         InlineKeyboardButton(text="✈️ هوایی ۳×", callback_data="st:هوایی:3"),
-         InlineKeyboardButton(text="✈️ هوایی ۵×", callback_data="st:هوایی:5")],
-        [InlineKeyboardButton(text="🚢 دریایی ۱×", callback_data="st:دریایی:1"),
-         InlineKeyboardButton(text="🚢 دریایی ۳×", callback_data="st:دریایی:3")],
-        [InlineKeyboardButton(text="🚜 زمینی ۱×", callback_data="st:زمینی:1"),
-         InlineKeyboardButton(text="🚜 زمینی ۳×", callback_data="st:زمینی:3"),
-         InlineKeyboardButton(text="🛩 پهپادی ۱×", callback_data="st:پهپادی:1")],
-        [InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
-         InlineKeyboardButton(text="🛡 پدافند", callback_data="mn:def")],
-        [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+STRIKE_KINDS = [("موشکی", "🚀", (1, 3, 5)), ("هوایی", "✈️", (1, 3, 5)),
+               ("دریایی", "🚢", (1, 3)), ("زمینی", "🚜", (1, 3)), ("پهپادی", "🛩", (1,))]
+
+
+def kb_strikes(uid=None) -> InlineKeyboardMarkup:
+    """⚔️ دکمه‌های حمله — در جنگ فقط انواع مجازِ جغرافیایی + دکمه‌ی «چرا نه»."""
+    rows = []
+    p = state.active(uid) if uid else None
+    w = war.war_of(p["country"]) if p else None
+    for kind, emo, cnts in STRIKE_KINDS:
+        ok = True
+        if w:
+            ok, _ = war.can_strike_kind(p["country"], war._enemy(p["country"], w), kind)
+        if ok:
+            rows.append([InlineKeyboardButton(text=f"{emo} {kind} {n}×",
+                                              callback_data=f"st:{kind}:{n}") for n in cnts])
+        else:
+            why = "مرز مشترک نیست" if kind == "زمینی" else "دسترسی دریایی نیست"
+            gno = "land" if kind == "زمینی" else "sea"
+            rows.append([InlineKeyboardButton(text=f"🚫 {kind} — {why}",
+                                              callback_data=f"gno:{gno}")])
+    rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
+                 InlineKeyboardButton(text="🛡 پدافند", callback_data="mn:def")])
+    rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def kb_duel(uid) -> InlineKeyboardMarkup:
@@ -529,20 +649,75 @@ def _pend_pop(uid: int, chat_id: int):
 
 # ═══════════ 🚀 شروع ═══════════
 
+
+def _join_text(gid, uname: str = "") -> str:
+    """⚔️ متن خوش‌آمد گروه — یک بار، پین می‌شود."""
+    lines = [texts.hdr("جنگ جهانی آغاز شد", "⚔️"), "",
+             "🌍 کشورت را انتخاب کن — هر که انتخاب کند 👑 رهبر همان کشور است.",
+             "🔒 کشور گرفته‌شده قفل می‌شود — عجله کن!",
+             f"🆔 جهان این گروه: <code>{texts.fa(gid) if gid > 0 else texts.fa(-gid)}</code>"]
+    if uname:
+        lines.append(f"🤖 ربات: @{uname}")
+    lines += ["",
+              "🛠 اشتباهی کشورت را زدی؟ آیدی عددی‌ات را (از 👤 پروفایل) برای مالک بفرست",
+              "   تا کشورت را عوض کند — فقط مالک می‌تواند.",
+              "", "🎮 شروع: دکمه‌های زیر یا نوشتن «شروع»"]
+    return "\n".join(lines)
+
+
+async def _group_hello(bt, gid: int, uname: str = ""):
+    """⚔️ یک‌بار برای هر گروه: معرفی + انتخاب کشور + پین."""
+    if gid >= 0 or db.kv_get(f"joined:{gid}"):
+        return
+    if not bt:
+        return
+    with contextlib.suppress(Exception):
+        db.GAME.set(gid)
+    db.kv_set(f"joined:{gid}", "1")
+    with contextlib.suppress(Exception):
+        sent = await bt.send_message(gid, _join_text(gid, uname),
+                                     reply_markup=kb_countries())
+        with contextlib.suppress(Exception):
+            await bt.pin_chat_message(gid, sent.message_id,
+                                      disable_notification=True)
+
+
+@router.my_chat_member()
+async def on_my_chat_member(ev):
+    """🎉 ربات به گروه اضافه شد → خوش‌آمد + پین (یک بار)."""
+    st = ""
+    with contextlib.suppress(Exception):
+        st = ev.new_chat_member.status
+    if st in ("member", "administrator") and ev.chat.id < 0:
+        uname = ""
+        with contextlib.suppress(Exception):
+            me = await ev.bot.get_me()
+            uname = me.username
+        await _group_hello(ev.bot, ev.chat.id, uname)
+
+
+# ═══════════ 🚀 شروع ═══════════
+
 @router.message(Command("start"))
 @router.message(F.text.in_(["شروع"]))
 async def cmd_start(m: Message):
     state.ensure(m.from_user.id, m.from_user.first_name, m.chat.id)
+    await _group_hello(bot, m.chat.id)
     if state.active(m.from_user.id):
-        await m.answer(state.card(m.from_user.id), parse_mode="HTML", reply_markup=kb_main())
+        sent = await m.answer(state.card(m.from_user.id), parse_mode="HTML",
+                              reply_markup=kb_main(m.from_user.id))
+        _own(m, sent, m.from_user.id)
         return
     if os.path.exists("assets/img/cover.jpg"):
         with open("assets/img/cover.jpg", "rb"):
-            await m.answer_photo(FSInputFile("assets/img/cover.jpg"),
-                                 caption=texts.WELCOME, parse_mode="HTML",
-                                 reply_markup=kb_countries())
+            sent = await m.answer_photo(FSInputFile("assets/img/cover.jpg"),
+                                        caption=texts.WELCOME, parse_mode="HTML",
+                                        reply_markup=kb_countries())
+            _own(m, sent, m.from_user.id)
     else:
-        await m.answer(texts.WELCOME, parse_mode="HTML", reply_markup=kb_countries())
+        sent = await m.answer(texts.WELCOME, parse_mode="HTML",
+                              reply_markup=kb_countries())
+        _own(m, sent, m.from_user.id)
 
 
 @router.callback_query(F.data.startswith("cyp:"))
@@ -587,8 +762,9 @@ async def _edit(c: CallbackQuery, text: str, kb=None):
         await c.message.edit_text(text[:4000], parse_mode="HTML",
                                   reply_markup=kb or kb_main())
     except Exception:
-        await c.message.answer(text[:4000], parse_mode="HTML",
-                               reply_markup=kb or kb_main())
+        sent = await c.message.answer(text[:4000], parse_mode="HTML",
+                                      reply_markup=kb or kb_main())
+        _own(c.message, sent, c.from_user.id)
 
 
 @router.callback_query(F.data.startswith("hp:"))
@@ -663,7 +839,7 @@ async def cb_menu(c: CallbackQuery):
     elif what == "war":
         p = state.active(uid)
         if p and war.war_of(p["country"]):
-            await _edit(c, war.front(uid), kb_strikes())
+            await _edit(c, war.front(uid), kb_strikes(uid))
         else:
             await _edit(c, "\n".join([
                 texts.hdr("فرماندهی جنگ", "⚔️"), "",
@@ -689,8 +865,29 @@ async def cb_menu(c: CallbackQuery):
         await _edit(c, guide.guide(p["country"]) if p else "⛔ اول «شروع»", kb_world())
     elif what == "news":
         await _edit(c, ai.news_feed(), kb_world())
+    elif what == "trade":
+        await _edit(c, economy.trade_view(uid), kb_trade(uid))
+    elif what == "howto":
+        await _edit(c, _howto(uid), kb_main(uid))
+    elif what == "events":
+        st = db.jload(db.kv_get(f"ev:{c.message.chat.id}"), None) or {}
+        if st.get("active") and db.now() < int(st.get("deadline", 0)):
+            ev_txt = next((e[0] for e in events.EVENTS
+                           if e[1] == st.get("word")), "⚡ رویداد زنده است")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⚡ شرکت در رویداد",
+                                      callback_data=f"evc:{st['word']}")],
+                [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+            await _edit(c, texts.hdr("رویداد زنده", "⚡") + "\n\n" + ev_txt, kb)
+        else:
+            await _edit(c, "\n".join([
+                texts.hdr("رویدادهای گروهی", "⚡"), "",
+                "⏱ هر ۴۰ دقیقه یک رویداد در گروه می‌آید —",
+                "اولین دکمه‌بزن جایزه می‌گیرد:",
+                "📦 قرارداد تسلیحاتی 💰۴۰۰ · 🎖 فراخوان رزمی ⭐۱۲۰XP · 📻 رمز 💰۲۰۰",
+                "", "چشم انتظار باش!"]), kb_main(uid))
     elif what == "front":
-        await _edit(c, war.front(uid), kb_strikes())
+        await _edit(c, war.front(uid), kb_strikes(uid))
     elif what == "army":
         await _edit(c, war.army(uid), kb_world())
     elif what == "def":
@@ -746,16 +943,16 @@ async def cb_buy(c: CallbackQuery):
     qty = 5 if c.data.startswith("wp5:") else 1
     iid = c.data.split(":")[1]
     msg = military.buy(uid, iid, qty)
-    await c.answer("خرید انجام شد 🛒" if msg.startswith("🛒") else msg[:180],
-                   show_alert=not msg.startswith("🛒"))
+    await c.answer(msg[:180], show_alert=not msg.startswith("🛒"))
     if msg.startswith("🛒"):
         with contextlib.suppress(Exception):
             await c.message.edit_text(military.arsenal(uid), parse_mode="HTML",
                                       reply_markup=kb_arsenal(uid))
-        # 🖼 عکس سینمایی تجهیزات شاخص
+        # 🖼 عکس تجهیزات — اختصاصی اگر باشد، وگرنه عکس دسته‌ای
         it = countries.ITEMS.get(iid)
-        if it and it[6]:
-            img = f"assets/img/{it[6]}"
+        if it:
+            own = f"assets/img/{it[6]}" if it[6] else ""
+            img = own if (own and os.path.exists(own)) else countries.category_img(it[0])
             if os.path.exists(img):
                 with contextlib.suppress(Exception):
                     with open(img, "rb"):
@@ -794,12 +991,116 @@ async def cb_ally(c: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("st:"))
+async def _delayed_missile(chat_id, uid):
+    """💥 برخورد موج موشکی بعد از زمان پرواز — ارسال خودکار به گروه."""
+    await asyncio.sleep(war.MISSILE_FLIGHT)
+    msg = war.resolve_missile(uid)
+    if msg and bot:
+        with contextlib.suppress(Exception):
+            await bot.send_message(chat_id, msg, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("gno:"))
+async def cb_geo_no(c: CallbackQuery):
+    """توضیح اینکه چرا این نوع حمله جغرافیایی ممکن نیست."""
+    why = ("🚫 حمله‌ی زمینی مرز زمینی مشترک می‌خواهد — کشورت و دشمن همسایه نیستند. "
+           "از حمله‌ی هوایی، موشکی یا پهپادی استفاده کن." if c.data == "gno:land" else
+           "🚫 حمله‌ی دریایی به آب‌های آزاد نیاز دارد — یک طرف به دریا دسترسی ندارد. "
+           "از حمله‌ی هوایی، موشکی یا پهپادی استفاده کن.")
+    await c.answer(why, show_alert=True)
+
+
+@router.callback_query(F.data.startswith("st:"))
 async def cb_strike(c: CallbackQuery):
+    uid = c.from_user.id
     parts = c.data.split(":")
     kind = parts[1]
     count = int(parts[2]) if len(parts) > 2 else 1
-    await c.message.edit_text(war.strike(c.from_user.id, kind, count),
-                              parse_mode="HTML", reply_markup=kb_strikes())
+    if kind == "موشکی":
+        # 🚀 پرتاب — برخورد بعد از زمان پرواز؛ دشمن فرصت تقویت پدافند دارد
+        msg = war.launch_missile(uid, count)
+        if "در راه" in msg:
+            if TEST_MODE:
+                msg += "\n\n" + war.resolve_missile(uid)
+            else:
+                asyncio.create_task(_delayed_missile(c.message.chat.id, uid))
+    else:
+        msg = war.strike(uid, kind, count)
+    await c.message.edit_text(msg, parse_mode="HTML", reply_markup=kb_strikes(uid))
+    await c.answer()
+
+
+# ═══════════ 💰 درآمد و تجارت — کاملاً دکمه‌ای ═══════════
+
+
+@router.callback_query(F.data == "dl:")
+async def cb_daily(c: CallbackQuery):
+    await _edit(c, state.daily(c.from_user.id), kb_main(c.from_user.id))
+    await c.answer()
+
+
+@router.callback_query(F.data == "wk:")
+async def cb_work(c: CallbackQuery):
+    await _edit(c, state.work(c.from_user.id), kb_main(c.from_user.id))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("evc:"))
+async def cb_evc(c: CallbackQuery):
+    """⚡ شرکت در رویداد — روی خود پیام رویداد؛ نتیجه همان‌جا."""
+    word = c.data.split(":", 1)[1]
+    r = events.claim(c.message.chat.id, c.from_user.id, word)
+    if not r:
+        return await c.answer("⏳ دیر رسیدی — رویداد تمام شد یا کسی زودتر زد.")
+    base = (getattr(c.message, "text", "") or "").strip()
+    txt = (base + "\n────\n" + r) if base else r
+    with contextlib.suppress(Exception):
+        await c.message.edit_text(txt[:4000], parse_mode="HTML")
+    await c.answer("✅ ثبت شد!")
+
+
+@router.callback_query(F.data.startswith("tb:"))
+async def cb_tbuy(c: CallbackQuery):
+    uid = c.from_user.id
+    _, gid, q = c.data.split(":")
+    msg = economy.trade_buy(uid, gid, int(q))
+    if msg.startswith("📥"):
+        msg += "\n\n" + economy.trade_view(uid)
+    await _edit(c, msg, kb_trade(uid))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("ts:"))
+async def cb_tsell(c: CallbackQuery):
+    uid = c.from_user.id
+    _, gid, q = c.data.split(":")
+    msg = economy.trade_sell(uid, gid, int(q))
+    if msg.startswith("📤"):
+        msg += "\n\n" + economy.trade_view(uid)
+    await _edit(c, msg, kb_trade(uid))
+    await c.answer()
+
+
+@router.callback_query(F.data == "tct:")
+async def cb_tcontract(c: CallbackQuery):
+    uid = c.from_user.id
+    p = state.active(uid)
+    if not p or not p["is_leader"]:
+        await _edit(c, "👑 فقط رهبر کشور قرارداد امضا می‌کند.", kb_trade(uid))
+    else:
+        await _edit(c, texts.hdr("قرارداد تجاری", "📜") + "\n\nبا کدام کشور؟",
+                    kb_targets(uid, "ct"))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("ct:"))
+async def cb_contract(c: CallbackQuery):
+    uid = c.from_user.id
+    msg = economy.contract(uid, c.data.split(":")[1])
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💼 میز تجارت", callback_data="mn:trade")],
+        [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+    await _edit(c, msg, kb)
     await c.answer()
 
 
@@ -876,7 +1177,7 @@ async def cb_declare_war(c: CallbackQuery):
     uid = c.from_user.id
     msg = war.declare(uid, c.data.split(":")[1])
     p = state.active(uid)
-    kb = kb_strikes() if (p and war.war_of(p["country"])) else kb_pol()
+    kb = kb_strikes(uid) if (p and war.war_of(p["country"])) else kb_pol()
     await _edit(c, msg, kb)
     await c.answer()
 
@@ -965,14 +1266,6 @@ async def cb_pcancel(c: CallbackQuery):
 
 # ═══════════ ⚡ رویداد گروهی ═══════════
 
-async def _ev_claim(m: Message, word: str):
-    r = events.claim(m.chat.id, m.from_user.id, word)
-    if r:
-        await m.answer(r, parse_mode="HTML")
-    else:
-        await m.answer("⚡ رویداد فعالی نیست — چشم انتظار باش.", parse_mode="HTML")
-
-
 # ═══════════ 🗣 دستورهای متنی فارسی ═══════════
 
 async def fa_words(m: Message):
@@ -992,18 +1285,33 @@ async def fa_words(m: Message):
             return await m.answer("✋ لغو شد — هر وقت خواستی از منو دوباره شروع کن.",
                                   parse_mode="HTML")
         if pend == "stmt":
-            return await m.answer(politics.statement(uid, t), parse_mode="HTML",
+            sent = await m.answer(politics.statement(uid, t), parse_mode="HTML",
                                   reply_markup=kb_pol())
+            _own(m, sent, uid)
+            return sent
+        if pend in ("areg", "achg"):
+            parts2 = t.split()
+            if len(parts2) >= 2 and parts2[0].isdigit():
+                fn = _admin_register if pend == "areg" else _admin_change
+                sent = await m.answer(fn(int(parts2[0]), " ".join(parts2[1:])),
+                                      parse_mode="HTML", reply_markup=kb_admin())
+                _own(m, sent, uid)
+                return sent
+            _pend_set(uid, m.chat.id, pend)     # ورودی نامعتبر — دوباره منتظر
+            sent = await m.answer("🔎 الگو: <code>آیدی‌عددی نام‌کشور</code> — "
+                                  "مثال: <code>123456 ایران</code>",
+                                  parse_mode="HTML", reply_markup=kb_admin())
+            _own(m, sent, uid)
+            return sent
         if pend == "party":
             nm, _, ideo = t.partition("|")
-            return await m.answer(politics.found(uid, nm.strip(), ideo.strip() or "ملی"),
+            sent = await m.answer(politics.found(uid, nm.strip(), ideo.strip() or "ملی"),
                                   parse_mode="HTML", reply_markup=kb_pol())
+            _own(m, sent, uid)
+            return sent
     # 🎛 گروه تمیز: هر متن دیگری نادیده — همه‌چیز از «منو»
     if not TEST_MODE and w not in TEXT_ALLOWED:
         return
-    # ⚡ رویداد گروهی
-    if w in ("تحویل", "اعزام", "رمزگشایی"):
-        return await _ev_claim(m, w)
     if w == "شروع":
         return await cmd_start(m)
     if w == "منو":
@@ -1027,20 +1335,11 @@ async def fa_words(m: Message):
         sent = await m.answer(state.card(uid) if act else texts.WELCOME,
                               parse_mode="HTML",
                               reply_markup=kb_main() if act else kb_countries())
+        _own(m, sent, uid)
         if act:
             db.kv_set(f"menu:{uid}", f"{sent.message_id}:{db.now()}")
         return sent
-    # ═══ 👑 دستورهای مالک ═══
-    if w in ("اعلام", "سربازها", "توزیع"):
-        if uid != config.OWNER_ID:
-            return await m.answer("👑 فقط مالک!", parse_mode="HTML")
-        for part in _admin_callup_parts():
-            await m.answer(part, parse_mode="HTML")
-        return
-    if w in ("مدیریت", "ادمین"):
-        if uid != config.OWNER_ID:
-            return await m.answer("👑 فقط مالک!", parse_mode="HTML")
-        return await m.answer(_admin_stats(), parse_mode="HTML", reply_markup=kb_admin())
+    # ═══ 👑 ابزارهای متنی مالک (نگهداری) ═══
     if w == "ثبت" and arg:
         if uid != config.OWNER_ID:
             return await m.answer("👑 فقط مالک!", parse_mode="HTML")
@@ -1082,7 +1381,10 @@ async def fa_words(m: Message):
                 "🔎 روی پیام بازیکن ریپلای کن و بنویس: <code>رهبر کشور</code>\n"
                 "یا: <code>رهبر آیدی‌عددی کشور</code> · <code>رهبر @آیدی کشور</code> · "
                 "خلع: <code>رهبر خالی کشور</code>", parse_mode="HTML")
-        return await m.answer(_admin_leader(arg), parse_mode="HTML", reply_markup=kb_admin())
+        sent = await m.answer(_admin_leader(arg), parse_mode="HTML",
+                              reply_markup=kb_admin())
+        _own(m, sent, uid)
+        return sent
     if w == "تنظیم":
         if uid != config.OWNER_ID:
             return await m.answer("👑 فقط مالک!", parse_mode="HTML")
