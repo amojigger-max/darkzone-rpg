@@ -181,8 +181,8 @@ def market() -> str:
 
 # ═══════════ 💼 تجارت: صادرات و واردات ═══════════
 def day_index() -> int:
-    """شماره‌ی امروز — هر ۲۴ ساعت پیشنهادها می‌چرخند."""
-    return db.now() // 86400
+    """📅 روزِ تهران — مرز واحد نیمه‌شب (همان db.day_index)."""
+    return db.day_index()
 
 
 def daily_deals(cid: str) -> list:

@@ -138,7 +138,7 @@ def ration(uid) -> str:
     p = active(uid)
     if not p:
         return "⛔ اول «شروع»"
-    day = db.now() // 86400
+    day = db.day_index()
     if db.kv_get(f"ration:{uid}") == str(day):
         return "🍞 جیره‌ی امروز را گرفتی — فردا برگرد."
     streak = int(db.kv_get(f"streak:{uid}", "0"))
@@ -202,7 +202,7 @@ def daily(uid) -> str:
     if not p:
         return "⛔ اول «شروع»"
     t = texts
-    day = db.now() // 86400
+    day = db.day_index()
     st = db.jload(db.kv_get(f"daily:{uid}"), None) or {}
     last, streak = st.get("day"), int(st.get("streak", 0))
     if last == day:

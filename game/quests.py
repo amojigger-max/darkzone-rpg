@@ -16,7 +16,7 @@ POOL = [
 
 
 def quest_state(uid) -> dict:
-    day = db.now() // 86400
+    day = db.day_index()
     st = db.jload(db.kv_get(f"quest:{uid}"), None) or {}
     if st.get("day") != day:
         goals = random.sample(POOL, k=3)

@@ -67,6 +67,8 @@ async def menu_lock_mw(handler, event: CallbackQuery, data):
 TEXT_ALLOWED = {
     "شروع", "منو",                                        # بازی
     "راهنما", "تجارت", "پروفایل", "نظامی", "جهان", "جنگ",  # دستورهای فارسی
+    "حمله", "نبرد", "خرید", "زرادخانه", "تجهیزات",        # نام‌های رایج
+    "دستورها", "دستور", "دستورات", "کمک",                 # فهرست دستورها
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -1322,13 +1324,20 @@ def _v_war(uid):
     if p and war.war_of(p["country"]):
         return war.front(uid), kb_strikes(uid)
     return "\n".join([texts.hdr("فرماندهی جنگ", "⚔️"), "",
-                       "🕊 کشورت در جنگ نیست.", "",
-                       "کشور هدف را انتخاب کن — 👑 فقط رهبر:"]), kb_declare(uid)
+                      "🕊 کشورت در جنگ نیست.", "",
+                      "کشور هدف را انتخاب کن — 👑 فقط رهبر:"]), kb_declare(uid)
 
 
+def _v_ars(uid):
+    return military.arsenal(uid), kb_arsenal(uid)
+
+
+# ⌨️ روال دستورها: هر کار یک نام اصلی + نام‌های رایج — همه به یک نتیجه
 WORD_VIEWS = {
     "تجارت": _v_trade, "پروفایل": _v_me, "نظامی": _v_mil,
-    "جهان": _v_world, "جنگ": _v_war,
+    "جهان": _v_world,
+    "جنگ": _v_war, "حمله": _v_war, "نبرد": _v_war,
+    "خرید": _v_ars, "زرادخانه": _v_ars, "تجهیزات": _v_ars,
 }
 
 
@@ -1454,6 +1463,11 @@ async def fa_words(m: Message):
                                   parse_mode="HTML", reply_markup=kb_pol())
             _own(m, sent, uid)
             return sent
+    if w in ("دستورها", "دستور", "دستورات", "کمک", "/commands"):
+        sent = await m.answer(texts.COMMANDS, parse_mode="HTML",
+                              reply_markup=kb_help(1))
+        _own(m, sent, uid)
+        return sent
     if w in ("/help", "راهنما"):
         sent = await m.answer(texts.HELP_PAGES[0], parse_mode="HTML",
                               reply_markup=kb_help(1))
