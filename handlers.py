@@ -980,8 +980,10 @@ async def cb_buy(c: CallbackQuery):
             await c.message.edit_text(military.arsenal(uid), parse_mode="HTML",
                                       reply_markup=kb_arsenal(uid))
         # 🖼 عکس تجهیزات — اختصاصی اگر باشد، وگرنه عکس دسته‌ای
+        # 🚦 حداکثر یک عکس در ۹۰ ثانیه — ضدفلود تلگرام
         it = countries.ITEMS.get(iid)
-        if it:
+        if it and db.now() - int(db.kv_get(f"bph:{uid}", "0")) > 90:
+            db.kv_set(f"bph:{uid}", str(db.now()))
             own = f"assets/img/{it[6]}" if it[6] else ""
             img = own if (own and os.path.exists(own)) else countries.category_img(it[0])
             if os.path.exists(img):

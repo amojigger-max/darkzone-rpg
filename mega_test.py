@@ -548,6 +548,11 @@ async def main():
     db.ex("UPDATE users SET money=5000 WHERE uid=?", (u_kp,))
     out = await cb(u_kp, "wp:kn23")
     T("خرید با باقی خزانه", "🛒" in out and "باقی خزانه" in out, out[:120])
+    db.ex("UPDATE users SET money=999999 WHERE uid=?", (u_kp,))
+    db.kv_set(f"bph:{u_kp}", "0")
+    out = await cb(u_kp, "wp:pokgun")
+    T("عکس خرید فقط یک بار در ۹۰ث", "🛒" in out and int(db.kv_get(f"bph:{u_kp}", "0")) > 0,
+      out[:80])
 
     # ═══ ۱۵. دور هفتم: درآمد رایگان + تجارت + قرارداد + قفل منو ═══
     from game import economy as _eco

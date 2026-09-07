@@ -165,6 +165,37 @@ async def main():
     db.GAME.set(None)
     handlers.bot = bot = Bot(config.TOKEN,
                              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
+    # 🚦 ضدفلود تلگرام: صف ارسال هر گروه + تلاش دوباره‌ی خودکار بعد از 429
+    from aiogram.client.session.middlewares.base import BaseRequestMiddleware
+    from aiogram.exceptions import TelegramRetryAfter
+
+    class AntiFlood(BaseRequestMiddleware):
+        """حداکثر ~۱۸ ارسال در دقیقه به هر گروه؛ 429 خودکار دوباره تلاش می‌کند."""
+
+        def __init__(self):
+            self._last, self._locks = {}, {}
+
+        async def __call__(self, make_request, bot, method):
+            name = type(method).__name__
+            chat_id = getattr(method, "chat_id", None)
+            sends = name in ("SendMessage", "SendPhoto", "SendVideo",
+                             "SendDocument", "SendAnimation")
+            if sends and chat_id:
+                lock = self._locks.setdefault(chat_id, asyncio.Lock())
+                async with lock:
+                    gap = 3.4 - (time.time() - self._last.get(chat_id, 0))
+                    if gap > 0:
+                        await asyncio.sleep(gap)
+                    self._last[chat_id] = time.time()
+            for _ in range(3):
+                try:
+                    return await make_request(bot, method)
+                except TelegramRetryAfter as e:
+                    await asyncio.sleep(e.retry_after + 1)
+            return await make_request(bot, method)
+
+    bot.session.middleware(AntiFlood())
     dp = Dispatcher()
     dp.include_router(handlers.router)
 
