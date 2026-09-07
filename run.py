@@ -201,8 +201,11 @@ async def main():
         except Exception:
             pass
 
+    print("boot: pre get_me", flush=True)
     me = await bot.get_me()
+    print("boot: get_me ok", flush=True)
     await bot.delete_webhook(drop_pending_updates=False)
+    print("boot: webhook ok", flush=True)
     # 🧹 منوی دستورها همیشه تازه — فقط جنگ جهانی، هیچ دستور قدیمی
     with contextlib.suppress(Exception):
         from aiogram.types import BotCommand
@@ -210,6 +213,7 @@ async def main():
             command="start", description="⚔️ شروع جنگ جهانی — ۵۰ کشور، مستعمره، پول زنده")])
     db.log("info", f"boot WW @{me.username}")
     print(f"⚔️ جنگ جهانی online as @{me.username}", flush=True)
+    print("boot: starting polling", flush=True)
 
     t1 = asyncio.create_task(world_loop(bot))
     t2 = asyncio.create_task(events_loop(bot))
