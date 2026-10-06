@@ -567,8 +567,9 @@ SPECS = {
 
 
 def spec_of(cid: str) -> tuple:
-    """(نوع، درصد، نام) تخصص کشور — در حمله و دفاع اثر واقعی دارد."""
-    return SPECS.get(cid, ("زمینی", 10, "ارتش ملی"))
+    """Game specialization: 6–10%, no nation receives an overwhelming multiplier."""
+    kind, pct, name = SPECS.get(cid, ("زمینی", 15, "ارتش ملی"))
+    return kind, max(6, min(10, int(pct * 0.4))), name
 
 
 # 💰 پول رسمی هر کشور — نرخِ بازی نسبت به سکه (≈ دلار)
@@ -726,13 +727,19 @@ def _build_elite():
 _round_prices()
 _build_elite()
 
+# v41: retain original catalog, bounded game-only balancing.
+from game.catalog import apply as _apply_balance
+_apply_balance(ITEMS, COUNTRIES)
 
+
+@db.atomic
 def init_items():
     for iid, (nm, em, ctry, atk, guard, price, img) in ITEMS.items():
         db.ex("INSERT INTO items(iid,name,emoji,country,atk,guard,price,max_dur,img) "
               "VALUES(?,?,?,?,?,?,?,?,?) "
               "ON CONFLICT(iid) DO UPDATE SET name=excluded.name, atk=excluded.atk, "
-              "guard=excluded.guard, price=excluded.price, img=excluded.img",
+              "guard=excluded.guard, price=excluded.price, img=excluded.img, "
+              "emoji=excluded.emoji, country=excluded.country",
               (iid, nm, em, ctry, atk, guard, price, 100, img))
 
 

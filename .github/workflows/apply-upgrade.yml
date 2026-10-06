@@ -1,0 +1,114 @@
+name: Apply DarkZone upgrade
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type APPLY:41.1.1 — this applies rewards and queues group notices'
+        required: true
+        type: string
+      reset_group:
+        description: 'Optional: exact negative ID of ONE group to reset; empty means no reset'
+        required: false
+        default: ''
+        type: string
+      season:
+        description: 'Idempotency key for the optional reset'
+        required: true
+        default: 'v41-new-season'
+        type: string
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: Validate before interrupting the running bot
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RESET_GROUP: ${{ inputs.reset_group }}
+          SEASON: ${{ inputs.season }}
+          PAT: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import os,re,subprocess,sys
+          import config
+          if os.environ['GITHUB_REF']!='refs/heads/main':
+              raise SystemExit('Run maintenance from the production main branch only.')
+          if os.environ['GITHUB_REPOSITORY']!=config.REPO:
+              raise SystemExit('Repository does not match the explicitly configured game repository.')
+          if os.environ['CONFIRMATION']!='APPLY:'+config.VERSION:
+              raise SystemExit('Confirmation does not match the installed source version.')
+          group=os.environ.get('RESET_GROUP','')
+          if group and not re.fullmatch(r'-[0-9]{1,19}',group):
+              raise SystemExit('Reset group must be one exact negative numeric ID.')
+          if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}',os.environ['SEASON']):
+              raise SystemExit('Invalid reset idempotency key.')
+          args=[sys.executable,'tools/rollout.py','--all-groups']
+          if group:args+=['--reset-game='+group,'--season='+os.environ['SEASON']]
+          subprocess.run(args,check=True)  # dry-run only; no confirmation flag
+          import save_db
+          save_db.check_write_access(os.environ['PAT'])  # GET only; old bot is still running
+          PY
+  apply:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: worldwar-run
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: Verify write access and fresh data before any reset or reward
+        env:
+          PAT: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import os,db,save_db
+          save_db.preflight(os.environ['PAT'],{f'games/{g}.db':db.game_path(g) for g in db.list_games()})
+          PY
+      - name: Preserve a reference before resetting or paying
+        run: |
+          backup="darkzone-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git tag "$backup" HEAD
+          git push origin "refs/tags/$backup"
+          printf 'Before-reset/payout backup reference: `%s`\n' "$backup" >> "$GITHUB_STEP_SUMMARY"
+      - name: Apply only the explicitly confirmed rollout
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RESET_GROUP: ${{ inputs.reset_group }}
+          SEASON: ${{ inputs.season }}
+        run: |
+          python - <<'PY'
+          import os,subprocess,sys,config
+          if os.environ['CONFIRMATION']!='APPLY:'+config.VERSION:
+              raise SystemExit('Source version changed; fresh confirmation required.')
+          args=[sys.executable,'tools/rollout.py','--all-groups','--runner-stopped','--confirm='+os.environ['CONFIRMATION']]
+          if os.environ.get('RESET_GROUP'):
+              args+=['--reset-game='+os.environ['RESET_GROUP'],'--season='+os.environ['SEASON']]
+          subprocess.run(args,check=True)
+          PY
+      - name: Save the committed financial state before the new bot starts
+        env:
+          PAT: ${{ github.token }}
+        run: python save_db.py
+      - name: Next step
+        run: |
+          echo 'Offline rollout succeeded. Run the worldwar-bot workflow next; it will drain the saved group-notice queue. This maintenance job does not poll Telegram or claim that messages were delivered.' >> "$GITHUB_STEP_SUMMARY"

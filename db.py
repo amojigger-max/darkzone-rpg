@@ -1,206 +1,139 @@
-"""🗄 جنگ جهانی — دیتابیس (SQLite WAL + thread-local)."""
-import json
+"""SQLite WAL, per-thread connections and nestable atomic game operations.
+
+No asynchronous work may be awaited inside transaction(). Domain operations are
+synchronous; Telegram and backups are handled only after the transaction commits.
+"""
 import contextlib
+import contextvars
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+import itertools
+import json
+import os
+from pathlib import Path
 import sqlite3
+import threading
 import time
-from datetime import datetime, timezone, timedelta
 
 import config
+from schema import SCHEMA, UPGRADE_SCHEMA
 
-TZ = timezone(timedelta(hours=3), "Tehran")
-
-# 🌍 جداسازی گروه‌ها — هر گروه دنیای خودش: games/<شناسه‌ی گروه>.db
-import contextvars
-import os
-
-GAME = contextvars.ContextVar("game", default=None)   # شناسه‌ی گروهِ جاری
-GAMES_DIR = "games"
-_conns = {}                                            # مسیر → اتصال
+TZ_OFFSET = 3 * 3600 + 1800
+TZ = timezone(timedelta(seconds=TZ_OFFSET), "Tehran")
+GAME = contextvars.ContextVar("game", default=None)
+ACTOR = contextvars.ContextVar("actor", default=None)
+GAMES_DIR = os.environ.get("DZ_GAMES_DIR", "games")
+_conns = {}  # preserved public test hook for the main thread
+_local = threading.local()
+_savepoints = itertools.count(1)
 
 
 def now() -> int:
     return int(time.time())
 
 
-TZ_OFFSET = 3 * 3600 + 1800          # 🕐 تهران UTC+3:30
-
-
 def day_index() -> int:
-    """📅 شماره‌ی روزِ تقویمی تهران — مرز دقیقِ نیمه‌شب محلی.
-
-    همه‌ی سیستم‌های روزانه (جایزه، مأموریت، چرخش زرادخانه) از همین
-    مرز واحد استفاده می‌کنند — ساعت ۰۰:۰۰ تهران همه‌چیز با هم تازه می‌شود.
-    """
     return (now() + TZ_OFFSET) // 86400
 
 
 def game_path(chat_id) -> str:
-    return f"{GAMES_DIR}/{chat_id}.db"
+    if isinstance(chat_id, bool):
+        raise ValueError("invalid game id")
+    cid = int(chat_id)
+    return str(Path(GAMES_DIR) / f"{cid}.db")
 
 
 def list_games():
-    """همه‌ی دنیاهای موجود (شناسه‌ی گروه‌ها)."""
-    if not os.path.isdir(GAMES_DIR):
+    root = Path(GAMES_DIR)
+    if not root.is_dir():
         return []
-    return sorted(int(f[:-3]) for f in os.listdir(GAMES_DIR) if f.endswith(".db"))
+    return sorted(int(p.stem) for p in root.glob("*.db")
+                  if p.stem.lstrip("-").isdigit())
+
+
+def _cache():
+    if threading.current_thread() is threading.main_thread():
+        return _conns
+    if not hasattr(_local, "conns"):
+        _local.conns = {}
+    return _local.conns
+
+
+def _open_db(c):
+    c.executescript(SCHEMA)
+    columns = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+    if "username" not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
+    c.executescript(UPGRADE_SCHEMA)
+    structure_columns={r[1] for r in c.execute('PRAGMA table_info(structures)')}
+    if 'previous_level' not in structure_columns:
+        c.execute('ALTER TABLE structures ADD COLUMN previous_level INTEGER NOT NULL DEFAULT 0 CHECK(previous_level BETWEEN 0 AND 3)')
+
+
+def _connection(path):
+    cache = _cache()
+    if path not in cache:
+        if path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        c = sqlite3.connect(path, timeout=30, isolation_level=None)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=FULL")
+        c.execute("PRAGMA busy_timeout=30000")
+        c.execute("PRAGMA foreign_keys=ON")
+        _open_db(c)
+        cache[path] = c
+    return cache[path]
 
 
 def con():
     g = GAME.get()
-    p = game_path(g) if g is not None else config.DB_PATH
-    c = _conns.get(p)
-    if c is None:
-        if g is not None:
-            os.makedirs(GAMES_DIR, exist_ok=True)
-        c = sqlite3.connect(p, 30)
-        c.row_factory = sqlite3.Row
-        c.execute("PRAGMA journal_mode=WAL")
-        c.execute("PRAGMA synchronous=NORMAL")
-        c.execute("PRAGMA busy_timeout=8000")
-        c.execute("PRAGMA temp_store=MEMORY")
-        _open_db(c)
-        _conns[p] = c
-    return c
-
-
-def _open_db(c):
-    """اسکیما + مهاجرت + ایندکس — روی هر دیتابیس."""
-    c.executescript(SCHEMA)
-    with contextlib.suppress(Exception):
-        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
-    c.executescript("""
-CREATE INDEX IF NOT EXISTS ix_users_country ON users(country);
-CREATE INDEX IF NOT EXISTS ix_users_active ON users(last_active);
-CREATE INDEX IF NOT EXISTS ix_users_level ON users(level DESC);
-CREATE INDEX IF NOT EXISTS ix_wars_status ON wars(status);
-CREATE INDEX IF NOT EXISTS ix_inv_uid ON inventory(uid);
-""")
-    c.commit()
-
-
-def _migrate_legacy():
-    """دنیای قدیمیِ واحد → دنیای گروه اصلی."""
-    if not os.path.exists("worldwar.db") or list_games():
-        return
-    chat = None
-    try:
-        lc = sqlite3.connect("worldwar.db")
-        r = lc.execute("SELECT v FROM kv WHERE k='main_group'").fetchone()
-        if r:
-            chat = int(r[0])
-        else:
-            r = lc.execute("SELECT chat_id FROM users WHERE chat_id IS NOT NULL "
-                           "AND chat_id < 0 LIMIT 1").fetchone()
-            if r:
-                chat = int(r[0])
-        lc.close()
-    except Exception:
-        pass
-    if chat is None:
-        return
-    os.makedirs(GAMES_DIR, exist_ok=True)
-    os.replace("worldwar.db", game_path(chat))
-    for ext in ("-wal", "-shm"):
-        if os.path.exists("worldwar.db" + ext):
-            os.replace("worldwar.db" + ext, game_path(chat) + ext)
-
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    uid INTEGER PRIMARY KEY,
-    name TEXT, country TEXT, branch TEXT,
-    rank INTEGER DEFAULT 1, xp INTEGER DEFAULT 0, level INTEGER DEFAULT 1,
-    money INTEGER DEFAULT 1000,
-    hp INTEGER DEFAULT 100, max_hp INTEGER DEFAULT 100,
-    kills INTEGER DEFAULT 0, spy_ops INTEGER DEFAULT 0,
-    party_id INTEGER, is_leader INTEGER DEFAULT 0,
-    joined INTEGER, last_active INTEGER, chat_id INTEGER, username TEXT
-);
-CREATE TABLE IF NOT EXISTS items (
-    iid TEXT PRIMARY KEY, name TEXT, emoji TEXT, country TEXT,
-    atk INTEGER, guard INTEGER, price INTEGER,
-    max_dur INTEGER DEFAULT 100, img TEXT
-);
-CREATE TABLE IF NOT EXISTS inventory (
-    uid INTEGER, iid TEXT, qty INTEGER DEFAULT 1, dur INTEGER,
-    PRIMARY KEY(uid, iid)
-);
-CREATE TABLE IF NOT EXISTS parties (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT, country TEXT, ideology TEXT, leader_uid INTEGER,
-    members INTEGER DEFAULT 1, power INTEGER DEFAULT 10,
-    rebel INTEGER DEFAULT 0, created INTEGER
-);
-CREATE TABLE IF NOT EXISTS statements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    party_id INTEGER, uid INTEGER, title TEXT, body TEXT, ts INTEGER
-);
-CREATE TABLE IF NOT EXISTS wars (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    a TEXT, b TEXT, status TEXT DEFAULT 'active',
-    score_a INTEGER DEFAULT 0, score_b INTEGER DEFAULT 0,
-    started INTEGER, ends INTEGER, winner TEXT
-);
-CREATE TABLE IF NOT EXISTS spyops (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uid INTEGER, target TEXT, success INTEGER, info TEXT, ts INTEGER
-);
-CREATE TABLE IF NOT EXISTS alliances (
-    a TEXT, b TEXT, created INTEGER
-);
-CREATE TABLE IF NOT EXISTS defense (
-    cid TEXT, layer TEXT, level INTEGER DEFAULT 30, hp INTEGER DEFAULT 100,
-    PRIMARY KEY(cid, layer)
-);
-CREATE TABLE IF NOT EXISTS news (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    text TEXT, ts INTEGER
-);
-CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
-CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    level TEXT, text TEXT, ts INTEGER
-);
-"""
-
-
-def init(path: str = None):
-    if path:                       # تست‌ها: مسیر صریح (تک‌دنیا)
-        for p, c in list(_conns.items()):
-            with contextlib.suppress(Exception):
-                c.close()
-        _conns.clear()
-        config.DB_PATH = path
-    else:                          # بوت تولید: دنیای قدیمی + همه‌ی دنیاها
-        _migrate_legacy()
-        for g in list_games():
-            with contextlib.suppress(Exception):
-                _open_db(con_for(g))
-    if not path:
-        return
-    _open_db(con())
+    return _connection(game_path(g) if g is not None else config.DB_PATH)
 
 
 def con_for(chat_id):
-    """اتصال به دنیای مشخص — برای حلقه‌ها و ذخیره‌سازی."""
-    os.makedirs(GAMES_DIR, exist_ok=True)
-    p = game_path(chat_id)
-    c = _conns.get(p)
-    if c is None:
-        c = sqlite3.connect(p, 30)
-        c.row_factory = sqlite3.Row
-        c.execute("PRAGMA journal_mode=WAL")
-        c.execute("PRAGMA synchronous=NORMAL")
-        c.execute("PRAGMA busy_timeout=8000")
-        c.execute("PRAGMA temp_store=MEMORY")
-        _open_db(c)
-        _conns[p] = c
-    return c
+    return _connection(game_path(chat_id))
+
+
+@contextlib.contextmanager
+def world(chat_id):
+    token = GAME.set(chat_id)
+    try:
+        yield
+    finally:
+        GAME.reset(token)
+
+
+@contextlib.contextmanager
+def transaction():
+    """BEGIN IMMEDIATE prevents double spending; nested calls use savepoints."""
+    c = con()
+    nested = c.in_transaction
+    sp = f"dz_{next(_savepoints)}"
+    c.execute(f"SAVEPOINT {sp}" if nested else "BEGIN IMMEDIATE")
+    try:
+        yield c
+    except BaseException:
+        if nested:
+            c.execute(f"ROLLBACK TO {sp}")
+            c.execute(f"RELEASE {sp}")
+        else:
+            c.rollback()
+        raise
+    else:
+        c.execute(f"RELEASE {sp}" if nested else "COMMIT")
+
+
+def atomic(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with transaction():
+            return fn(*args, **kwargs)
+    return wrapped
 
 
 def ex(sql, args=()):
-    con().execute(sql, args)
-    con().commit()
+    return con().execute(sql, args)
 
 
 def one(sql, args=()):
@@ -225,20 +158,76 @@ def kv_get(k, d=None):
 
 
 def jload(s, d=None):
-    if not s:
-        return d
     try:
-        return json.loads(s)
-    except Exception:
+        return json.loads(s) if s else d
+    except (ValueError, TypeError):
         return d
+
+
+def integer(value, default=0, lo=None, hi=None):
+    try:
+        n = int(value)
+    except (ValueError, TypeError, OverflowError):
+        return default
+    if lo is not None:
+        n = max(lo, n)
+    if hi is not None:
+        n = min(hi, n)
+    return n
+
+
+def debit(uid, amount):
+    if type(amount) is not int or amount < 0:
+        raise ValueError("invalid amount")
+    return ex("UPDATE users SET money=money-? WHERE uid=? AND money>=?",
+              (amount, uid, amount)).rowcount == 1
+
+
+def audit(action, actor=None, **detail):
+    ex("INSERT INTO ledger(action,actor,detail,ts) VALUES(?,?,?,?)",
+       (action, actor, json.dumps(detail, ensure_ascii=False, sort_keys=True), now()))
 
 
 def log(level, text):
-    try:
-        ex("INSERT INTO logs(level,text,ts) VALUES(?,?,?)", (level, text[:500], now()))
-    except Exception:
-        pass
+    with contextlib.suppress(sqlite3.Error):
+        ex("INSERT INTO logs(level,text,ts) VALUES(?,?,?)", (level, str(text)[:1000], now()))
 
 
 def tehran_date(ts: int) -> str:
     return datetime.fromtimestamp(ts, TZ).strftime("%Y-%m-%d %H:%M")
+
+
+def close_all():
+    for c in list(_cache().values()):
+        with contextlib.suppress(sqlite3.Error):
+            c.close()
+    _cache().clear()
+
+
+def _migrate_legacy():
+    source = Path(config.DB_PATH)
+    if not source.is_file() or list_games():
+        return
+    with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as c:
+        try:
+            r = c.execute("SELECT v FROM kv WHERE k='main_group'").fetchone()
+        except sqlite3.Error:
+            return
+        if not r or not str(r[0]).startswith("-"):
+            return
+        dest = game_path(int(r[0]))
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(dest) as target:
+            c.backup(target)  # includes committed WAL data; source retained as backup
+
+
+def init(path: str = None):
+    if path is not None:
+        close_all()
+        GAME.set(None)
+        config.DB_PATH = path
+        con()
+        return
+    _migrate_legacy()
+    for gid in list_games():
+        con_for(gid)

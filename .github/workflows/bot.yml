@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '17 */4 * * *'
-
+permissions:
+  contents: write
 concurrency:
   group: worldwar-run
   cancel-in-progress: true
-
 jobs:
   bot:
     runs-on: ubuntu-latest
@@ -17,17 +17,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: python -c "import db; db.init(); import countries; countries.init_items(); print('db ok')"
-      - name: run bot
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: Run upgraded bot without automatic reset
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          PAT: ${{ secrets.PAT }}
-          INLOOP_AUTOSAVE: "1"
-          AUTOSAVE_MIN: "5"
+          PAT: ${{ github.token }}
+          INLOOP_AUTOSAVE: '1'
+          AUTOSAVE_MIN: '2'
         run: python -u run.py
-      - name: autosave db
+      - name: Final database snapshot
         if: always()
         env:
-          PAT: ${{ secrets.PAT }}
-        run: python save_db.py || echo "save failed"
+          PAT: ${{ github.token }}
+        run: python save_db.py

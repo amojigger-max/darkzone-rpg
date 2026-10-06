@@ -1,9 +1,7 @@
 """🎮 جنگ جهانی — رابط کاربری: کاملاً فارسی، دکمه‌ای، تمیز."""
 
-import asyncio
 import contextlib
 import os
-import time
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton,
@@ -13,7 +11,9 @@ import config
 import countries
 import db
 import texts
-from game import ai, defense, economy, events, geo, guide, infra, invest, military, politics, quests, state, toll, war, welfare
+from game import ai, defense, economy, events, geo, guide, infra, invest, military, politics, quests, state, toll, war, welfare, campaign, notifications, rewards, rules
+from htmlsafe import split_html
+import json
 
 router = Router()
 
@@ -27,13 +27,13 @@ def handlers_bot():
 TEST_MODE = False
 bot = None  # ← run.py تزریق می‌کند
 # دکمه‌هایی که هر کسی می‌تواند بزند (پاسخ اتحاد/صلح/نبرد/رویداد/چرا-نه)
-MENU_BYPASS = ("aac:", "pac:", "dac:", "gno:", "evc:")
+MENU_BYPASS = ("aac:", "pac:", "dac:", "gno:", "evc:", "pm:", "ctac:")
 
 
-def _own(c, sent, uid):
-    """ثبت مالک منوی تازه‌فرستاده‌شده — دکمه‌هایش فقط برای خودش."""
-    with contextlib.suppress(Exception):
-        db.kv_set(f"mown:{c.chat.id}:{sent.message_id}", str(uid))
+def _own(c,sent,uid):
+    chat=getattr(c,'chat',None) or getattr(getattr(c,'message',None),'chat',None)
+    if chat and sent and getattr(sent,'message_id',None):
+        db.kv_set(f'mown:{chat.id}:{sent.message_id}',uid)
 
 
 def _menu_locked(c) -> str:
@@ -65,6 +65,7 @@ async def menu_lock_mw(handler, event: CallbackQuery, data):
 
 
 TEXT_ALLOWED = {
+    "عملیات", "سازمان‌ملل", "تنگه‌ها", "ناوگان", "انرژی", "تحریم",
     "شروع", "استارت", "منو",                                # بازی
     "راهنما", "تجارت", "پروفایل", "نظامی", "جهان", "جنگ",  # دستورهای فارسی
     "حمله", "نبرد", "خرید", "زرادخانه", "تجهیزات",        # نام‌های رایج
@@ -72,6 +73,7 @@ TEXT_ALLOWED = {
     "سرمایه", "سرمایه‌گذاری", "معدن", "دارایی",           # سرمایه‌گذاری
     "زیرساخت", "انقلاب", "شورش",                          # زیرساخت + انقلاب
     "رفاه", "عوارض",                                       # رفاه + تنگه
+    "شهرها", "پایگاه", "مهمات", "قراردادها", "هدایا",
     "رهبر", "ثبت", "تغییر", "تنظیم",                      # ابزار مالک
 }
 bot: Bot = None
@@ -124,33 +126,13 @@ def kb_admin() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
 
 
-def _admin_callup_parts() -> list:
-    """📣 اعلام‌نظام — همه‌ی سربازان با تگ، گروه‌بندی با کشور (تکه‌های امن)."""
-    rows = db.q("SELECT uid, name, country, level FROM users "
-                "WHERE country IS NOT NULL ORDER BY country, level DESC")
-    t = texts
-    if not rows:
-        return ["هنوز بازیکنی ثبت نشده — «ثبت آیدی کشور»"]
-    groups = {}
+def _admin_callup_parts():
+    rows=db.q("SELECT uid,name,country FROM users ORDER BY country,uid")
+    body=texts.hdr('فراخوان همهٔ بازیکنان','📣')+'\n'
     for r in rows:
-        groups.setdefault(r["country"], []).append(r)
-    parts, cur = [], [t.hdr("اعلام عمومی سربازان", "📣"),
-                      "به میدان بیایید — جنگ جهانی آغاز شده!", ""]
-    for cid in sorted(groups, key=lambda c: -len(groups[c])):
-        c = countries.COUNTRIES.get(cid)
-        if not c:
-            continue
-        tags = " ".join(t.mention(r["uid"], (r["name"] or "سرباز")[:20])
-                        for r in groups[cid])
-        block = [f"{c['flag']} <b>{c['name']}</b> ({t.fa(len(groups[cid]))}):",
-                 tags, ""]
-        if len("\n".join(cur + block)) > 3500:
-            parts.append("\n".join(cur))
-            cur = []
-        cur += block
-    cur.append("🎮 در گروه بنویس: «منو»")
-    parts.append("\n".join(cur))
-    return parts
+        c=countries.COUNTRIES.get(r['country'],{})
+        body+=f"\n{c.get('flag','▫️')} {texts.mention(r['uid'],r['name'])} — {c.get('name','بدون کشور')}"
+    return split_html(body or 'بازیکنی نیست.')
 
 
 def _admin_stats() -> str:
@@ -172,7 +154,7 @@ def _admin_stats() -> str:
         "",
         "👑 رهبر کشور: ریپلای روی پیام بازیکن + «رهبر کشور»",
         "یا: <code>رهبر آیدی کشور</code> · <code>رهبر @آیدی کشور</code>",
-        "خلع ← NPC: <code>رهبر خالی آمریکا</code>",
+        "خلع بدون دولت خودکار: <code>رهبر خالی آمریکا</code>",
         "",
         "🔄 تغییر کشور: <code>تغییر آیدی کشور</code>",
         "مثال: <code>تغییر 8694290031 روسیه</code>"])
@@ -192,55 +174,51 @@ def _admin_register(uid_target: int, country_name: str) -> str:
     return f"✅ بازیکن <code>{uid_target}</code> ثبت شد در {c['flag']} {c['name']}"
 
 
-def _admin_change(uid_target: int, country_name: str) -> str:
-    p = state.get(uid_target)
-    if not p:
-        return f"⛔ بازیکن {uid_target} ثبت نشده — اول: <code>ثبت {uid_target} کشور</code>"
-    cid = _find_country(country_name or "")
-    if not cid:
-        return "⛔ کشور نامعتبر."
-    db.ex("UPDATE users SET country=? WHERE uid=?", (cid, uid_target))
-    c = countries.COUNTRIES[cid]
-    return f"🔄 کشور بازیکن <code>{uid_target}</code> ← {c['flag']} {c['name']}"
+@db.atomic
+def _admin_change(uid_target,country_name):
+    p=state.get(uid_target);cid=_find_country(country_name or '')
+    if not p or not cid:return '⛔ حساب یا کشور پیدا نشد.'
+    if p['country']==cid:return '✅ کشور تغییری نکرد.'
+    if war.war_of(p['country']) or war.war_of(cid):return '⚔️ جابه‌جایی رهبر در زمان جنگ ممنوع است.'
+    if db.one('SELECT 1 FROM users WHERE country=?',(cid,)):return '⛔ کشور مقصد از قبل بازیکن دارد.'
+    db.ex('DELETE FROM country_claims WHERE uid=?',(uid_target,))
+    db.ex('UPDATE users SET country=?,is_leader=1,branch=NULL,party_id=NULL WHERE uid=?',(cid,uid_target))
+    db.ex('INSERT INTO country_claims(country,uid,claimed) VALUES(?,?,?)',(cid,uid_target,db.now()))
+    db.kv_set(f'claimed:{cid}',db.now());infra.ensure(cid);defense.ensure(cid)
+    db.audit('admin_country_change',config.OWNER_ID,uid=uid_target,old=p['country'],new=cid)
+    return f"🔄 {texts.mention(uid_target,p['name'])} به {countries.COUNTRIES[cid]['name']} منتقل شد؛ شاخهٔ قبلی پاک شد."
 
 
-def _set_leader(uid_t: int, cname: str) -> str:
-    """👑 رهبر کردن بازیکن مشخص در کشور — ثبت خودکار هم دارد."""
-    cid = _find_country(cname or "")
-    if not cid:
-        return "⛔ کشور نامعتبر — مثال: <code>رهبر آمریکا</code>"
-    p = state.get(uid_t)
-    if p and p["country"] and p["country"] != cid:
-        return (f"⛔ بازیکن در کشور دیگری است — اول: "
-                f"<code>تغییر {uid_t} {countries.COUNTRIES[cid]['name']}</code>")
-    if not p or not p["country"]:
-        if not state.enlist(uid_t, cid, f"Player{uid_t % 1000}"):
-            return "⛔ خطا در ثبت."
-    db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
-    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid_t,))
-    c = countries.COUNTRIES[cid]
-    return f"👑 بازیکن <code>{uid_t}</code> رهبر {c['flag']} {c['name']} شد!"""
+@db.atomic
+def _set_leader(uid_t,cname):
+    cid=_find_country(cname or '')
+    if not cid:return '⛔ کشور نامعتبر.'
+    p=state.get(uid_t)
+    if p and p['country'] and p['country']!=cid:return '⛔ ابتدا از دستور تغییر کشور استفاده کن.'
+    if war.war_of(cid):return '⚔️ تغییر رهبر در میانهٔ جنگ ممنوع است.'
+    if not p or not p['country']:
+        if not state.enlist(uid_t,cid,f'Player{uid_t%1000}'):return '⛔ کشور قابل واگذاری نیست.'
+    db.ex('UPDATE users SET is_leader=0 WHERE country=?',(cid,))
+    db.ex('UPDATE users SET is_leader=1 WHERE uid=?',(uid_t,))
+    db.ex('DELETE FROM country_claims WHERE country=? OR uid=?',(cid,uid_t))
+    db.ex('INSERT INTO country_claims(country,uid,claimed) VALUES(?,?,?)',(cid,uid_t,db.now()))
+    db.audit('admin_leader',config.OWNER_ID,uid=uid_t,country=cid)
+    return f"👑 {texts.mention(uid_t,(state.get(uid_t) or {}).get('name'))} رهبر {countries.COUNTRIES[cid]['name']} شد."
 
 
-def _admin_leader(arg: str) -> str:
-    """👑 تعیین/خلع رهبر کشور — با آیدی عددی یا «خالی» برای NPC."""
-    parts = arg.split()
-    # 👑 خلع: رهبر خالی آمریکا → کشور NPC می‌شود
-    if parts and parts[0] in ("خالی", "-"):
-        cid = _find_country(" ".join(parts[1:]))
-        if not cid:
-            return "⛔ کشور نامعتبر — مثال: <code>رهبر خالی آمریکا</code>"
-        c = countries.COUNTRIES[cid]
-        db.ex("UPDATE users SET is_leader=0 WHERE country=? AND is_leader=1", (cid,))
-        # 🧹 ثبت‌های اشتباه قدیمی (Player بدون فعالیت) پاک می‌شوند
-        db.ex("DELETE FROM users WHERE country=? AND chat_id IS NULL "
-              "AND (name LIKE 'Player%') AND branch IS NULL", (cid,))
-        return f"♻️ {c['flag']} {c['name']} بدون رهبر شد — دولت NPC."
-    if len(parts) >= 2 and parts[0].isdigit():
-        return _set_leader(int(parts[0]), " ".join(parts[1:]))
-    return ("🔎 الگو: روی پیام بازیکن ریپلای کن و بنویس <code>رهبر کشور</code>\n"
-            "یا: <code>رهبر آیدی‌عددی کشور</code> · <code>رهبر @آیدی کشور</code> · "
-            "خلع: <code>رهبر خالی کشور</code>")
+@db.atomic
+def _admin_leader(arg):
+    parts=arg.split()
+    if parts and parts[0] in ('خالی','-'):
+        cid=_find_country(' '.join(parts[1:]))
+        if not cid:return '⛔ کشور نامعتبر.'
+        if war.war_of(cid):return '⚔️ خلع رهبر در میانهٔ جنگ ممنوع است.'
+        db.ex('UPDATE users SET is_leader=0 WHERE country=?',(cid,))
+        db.ex('DELETE FROM country_claims WHERE country=?',(cid,))
+        return '🕊 کشور بدون رهبر شد؛ هیچ دولت NPC جای آن نمی‌آید. حساب اعضا حذف نشد.'
+    if len(parts)>=2 and (uid:=texts.to_int(parts[0])):
+        return _set_leader(uid,' '.join(parts[1:]))
+    return 'الگو: <code>رهبر آیدی کشور</code> یا <code>رهبر خالی کشور</code>'
 
 
 @router.callback_query(F.data.startswith("ad:"))
@@ -253,11 +231,11 @@ async def cb_admin(c: CallbackQuery):
         await _edit(c, _admin_stats(), kb_admin())
     elif what == "players":
         rows = db.q("SELECT uid, name, country, level FROM users "
-                    "WHERE country IS NOT NULL ORDER BY level DESC LIMIT 15")
+                    "ORDER BY level DESC,uid")
         lines = [texts.hdr("بازیکنان", "👥"), ""]
         for r in rows:
             cc = countries.COUNTRIES.get(r["country"], {})
-            lines.append(f"▫️ <code>{r['uid']}</code> — {r['name']} · "
+            lines.append(f"▫️ {texts.mention(r['uid'],r['name'])} · "
                          f"{cc.get('flag', '')} سطح {r['level']}")
         lines.append("")
         lines.append(texts.DASH)
@@ -268,7 +246,7 @@ async def cb_admin(c: CallbackQuery):
             texts.hdr("تعیین یا خلع رهبر", "👑"), "",
             "✍️ الگو را بفرست:",
             "▫️ <code>آیدی‌عددی نام‌کشور</code> — بازیکن رهبر شود",
-            "▫️ <code>خالی نام‌کشور</code> — کشور بدون رهبر (NPC)",
+            "▫️ <code>خالی نام‌کشور</code> — کشور بدون رهبر و بدون دولت خودکار",
             "", "«لغو» برای انصراف"]), kb_admin())
     elif what == "tog:bl":
         db.kv_set("bl_off", "" if db.kv_get("bl_off") else "1")
@@ -292,11 +270,8 @@ async def cb_admin(c: CallbackQuery):
             "مثال: <code>123456 ایران</code>",
             "", "«لغو» برای انصراف"]), kb_admin())
     elif what in ("callup", "troops"):
-        for part in _admin_callup_parts():
-            with contextlib.suppress(Exception):
-                await c.message.answer(part, parse_mode="HTML")
-        await c.answer("📣 فراخوان فرستاده شد")
-        return
+        notifications.emit('📣 فراخوان بازیکنان دارک‌زون؛ از /menu وضعیت کشور و امکانات تازه را ببینید.',uids=[r['uid'] for r in db.q('SELECT uid FROM users ORDER BY uid')])
+        await _edit(c,'📣 فراخوان برای تمام حساب‌های همین گروه در صف پایدار ثبت شد؛ وضعیت ارسال از پنل اعلان‌ها.',kb_admin())
     await c.answer()
 
 
@@ -353,7 +328,13 @@ def kb_main(uid=None) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🏘 رفاه مردم", callback_data="mn:welf")],
         [InlineKeyboardButton(text="🛃 عوارض تنگه", callback_data="toll:"),
          InlineKeyboardButton(text="📖 راهنما", callback_data="mn:help")]]
+    rows.append([InlineKeyboardButton(text="🇺🇳 سازمان ملل",callback_data="un:"),InlineKeyboardButton(text="🧭 عملیات با نام دلخواه",callback_data="ops:")])
+    rows.append([InlineKeyboardButton(text="⛽ نیروگاه و سوخت",callback_data="en:"),InlineKeyboardButton(text="🚢 ناوگان نفت‌کش",callback_data="fv:")])
+    rows.append([InlineKeyboardButton(text="🌉 گذرگاه‌ها و عوارض",callback_data="sg:"),InlineKeyboardButton(text="🤝 مدیریت اتحادها",callback_data="allymanage:")])
+    rows.append([InlineKeyboardButton(text="🏙 شهرها و پایگاه‌ها",callback_data="cities:"),InlineKeyboardButton(text="📜 پیشنهادهای دریافتی",callback_data="contracts:")])
+    rows.append([InlineKeyboardButton(text="🎁 وضعیت هدایا",callback_data="gifts:"),InlineKeyboardButton(text="🏕 اجازه پایگاه متحد",callback_data="staging:")])
     if uid == config.OWNER_ID:
+        rows.append([InlineKeyboardButton(text="📣 وضعیت اعلان‌ها",callback_data="adout:")])
         rows.append([InlineKeyboardButton(text="🛠 مدیریت", callback_data="ad:stats")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -374,43 +355,15 @@ def kb_trade(uid) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _howto(uid) -> str:
-    """🧭 راهنمای کوچک هوشمند — بر اساس وضعیت بازیکن می‌گوید چی بزن."""
-    p = state.active(uid)
-    lines = [texts.hdr("چی بزنم؟", "🧭")]
-    if not p:
-        lines += ["", "🗝 تازه‌ای؟ از منوی شروع کشورت را انتخاب کن.",
-                  "بعد هر روز: 🎁 جایزه → 🔨 کار → 🎯 مأموریت."]
-        return "\n".join(lines)
-    lines += [
-        "",
-        "💰 پول رایگان هر روز:",
-        "▫️ 🎁 جایزه‌ی روزانه — با رگه‌ی پیوسته بیشتر می‌شود",
-        "▫️ 🔨 کار کن — هر ۵ دقیقه یک شیفت",
-        "▫️ 🎯 مأموریت روزانه — سه هدف، جایزه نقدی",
-        "▫️ ⚡ رویداد گروهی — هر ۴۰ دقیقه، اولین دکمه‌بزن برنده",
-        "",
-        "📈 پول بیشتر؟ 💼 تجارت — ارزان وارد کن، گران صادر کن؛",
-        "   📜 قرارداد تجاری — پاداش ۱۵ تا ۴۵ درصد.",
-    ]
-    w = war.war_of(p["country"])
-    lines.append("👑 رهبری: " + ("⚔️ در جنگی — 🪖 نظامی → فرماندهی جنگ"
-                                if w else "🕊 در صلحی — 🛡 پدافند را قوی نگه دار"))
-    return "\n".join(lines)
+def _howto(uid):
+    return texts.hdr('قدم بعدی','🧭')+'\n۱) شاخهٔ نظامی → درآمد و تجهیزات\n۲) شهرها → برق، پایگاه و خدمات\n۳) اعلان نوع جنگ با بازیکن واقعی\n۴) تدارکات، زیرساخت هدف و محاصرهٔ چندساعته\n۵) تثبیت شهرها؛ تسلیم کشور مرحلهٔ جداگانه است.\nهمهٔ جزئیات و زمان‌ها در راهنمای جدید آمده‌اند.'
 
 
-def kb_infra(uid) -> InlineKeyboardMarkup:
-    """🏗 زیرساخت + ساخت‌وساز ملی — تعمیر و ساخت."""
-    rows = []
-    for key, name, price in infra.INFRA:
-        rows.append([InlineKeyboardButton(text=f"🔧 تعمیر {name}",
-                                          callback_data=f"ifix:{key}")])
-    for key, name, price, eff in infra.BUILDINGS:
-        rows.append([InlineKeyboardButton(text=f"🏗 ساخت {name} — {eff}",
-                                          callback_data=f"ibld:{key}")])
-    rows.append([InlineKeyboardButton(text="🪖 فرماندهی نظامی", callback_data="mn:mil"),
-                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+def kb_infra(uid):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='🏙 شهرها و پایگاه‌ها',callback_data='cities:')],
+        [InlineKeyboardButton(text='🏗 وضعیت ملی',callback_data='mn:infra'),InlineKeyboardButton(text='🏘 رفاه',callback_data='mn:welf')],
+        [InlineKeyboardButton(text='🎛 منو',callback_data='mn:main')]])
 
 
 def kb_revolt(uid) -> InlineKeyboardMarkup:
@@ -434,7 +387,7 @@ def kb_revolt(uid) -> InlineKeyboardMarkup:
 
 def kb_mil() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚔️ رزم", callback_data="mn:battle"),
+        [InlineKeyboardButton(text="🎯 تمرین بدون NPC", callback_data="mn:battle"),
          InlineKeyboardButton(text="🏥 استراحت", callback_data="mn:rest")],
         [InlineKeyboardButton(text="🛒 تجهیزات", callback_data="mn:arsenal"),
          InlineKeyboardButton(text="🔧 تعمیر", callback_data="mn:repair")],
@@ -511,7 +464,7 @@ def kb_toll(uid) -> InlineKeyboardMarkup:
     from game import state as _st
     rows = []
     p = _st.active(uid)
-    if p and toll.is_on() and p["country"] != "ir":
+    if p and toll.needs_pass(uid):
         rows.append([InlineKeyboardButton(text="💵 پرداخت عوارض امروز",
                                           callback_data="tollpay:")])
     if p and p["country"] == "ir":
@@ -571,9 +524,9 @@ def kb_targets(uid, action, page=0) -> InlineKeyboardMarkup:
     """لیست صفحه‌بندی‌شده‌ی کشورها برای جاسوسی/اتحاد/جنگ/تحریم."""
     p = state.active(uid)
     own = p["country"] if p else None
-    ids = [cid for cid in countries.COUNTRIES if cid != own]
+    ids = [cid for cid in countries.COUNTRIES if cid != own and db.one("SELECT 1 FROM users WHERE country=? AND is_leader=1", (cid,))]
     per = 10
-    page = max(0, min(page, (len(ids) - 1) // per))
+    page = max(0, min(page, max(0,(len(ids) - 1) // per)))
     chunk = ids[page * per:(page + 1) * per]
     rows = []
     for a, b in zip(chunk[::2], chunk[1::2]):
@@ -602,8 +555,8 @@ def kb_targets(uid, action, page=0) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-STRIKE_KINDS = [("موشکی", "🚀", (1, 3, 5)), ("هوایی", "✈️", (1, 3, 5)),
-               ("دریایی", "🚢", (1, 3)), ("زمینی", "🚜", (1, 3)), ("پهپادی", "🛩", (1,))]
+STRIKE_KINDS = [("موشکی", "🚀", (1, 3)), ("هوایی", "✈️", (1, 3, 5)),
+               ("دریایی", "🚢", (1, 3)), ("زمینی", "🚜", (1, 3)), ("پهپادی", "🛩", (1,3)), ("توپخانه", "💥", (1,3)), ("چندمنظوره", "✈️", (1,3)), ("آبی‌خاکی", "⚓", (1,3))]
 
 
 def kb_strikes(uid=None) -> InlineKeyboardMarkup:
@@ -623,6 +576,8 @@ def kb_strikes(uid=None) -> InlineKeyboardMarkup:
             gno = "land" if kind == "زمینی" else "sea"
             rows.append([InlineKeyboardButton(text=f"🚫 {kind} — {why}",
                                               callback_data=f"gno:{gno}")])
+    rows.append([InlineKeyboardButton(text="🚚 تأمین مهمات",callback_data="supply:"), InlineKeyboardButton(text="🏳 تسلیم / شرایط",callback_data="sur:")])
+    rows.append([InlineKeyboardButton(text="🕊 قبول صلح",callback_data="pac:")])
     rows.append([InlineKeyboardButton(text="🎯 حمله‌ی هدفمند — انتخاب بخش",
                                       callback_data="aim:")])
     rows.append([InlineKeyboardButton(text="🗺 جبهه", callback_data="mn:front"),
@@ -631,15 +586,14 @@ def kb_strikes(uid=None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_aims(uid=None) -> InlineKeyboardMarkup:
-    """🎯 انتخاب بخش زیرساخت دشمن برای حمله‌ی هدفمند."""
-    rows = []
-    for key, name, price in infra.INFRA:
-        rows.append([InlineKeyboardButton(text=f"🎯 {name}",
-                                          callback_data=f"aimk:{key}")])
-    rows.append([InlineKeyboardButton(text="⚔️ حمله‌ی معمولی",
-                                      callback_data="mn:front"),
-                 InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+def kb_aims(uid=None):
+    p=state.active(uid);w=war.war_of(p['country']) if p else None
+    rows=[]
+    if w:
+        enemy=war._enemy(p['country'],w)
+        for i,name in enumerate(geo.CITIES[enemy]):
+            if name not in geo.occupied(enemy):rows.append([InlineKeyboardButton(text=f'🏙 {name}',callback_data=f'acity:{i}')])
+    rows.append([InlineKeyboardButton(text='↩️ جبهه',callback_data='mn:front')])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -661,21 +615,17 @@ def kb_aim_kinds(uid, target: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def kb_duel(uid) -> InlineKeyboardMarkup:
-    """⚔️ انتخاب حریف نبرد تن‌به‌تن — بازیکنان فعالِ همین جهان."""
-    rows = db.q("SELECT uid, name, country FROM users "
-                "WHERE country IS NOT NULL AND branch IS NOT NULL AND uid!=? "
-                "ORDER BY last_active DESC LIMIT 12", (uid,))
-    keys = []
-    for r in rows:
-        cc = countries.COUNTRIES.get(r["country"], {})
-        keys.append([InlineKeyboardButton(
-            text=f"{cc.get('flag', '')} {r['name'] or 'سرباز'}",
-            callback_data=f"du:{r['uid']}")])
-    if not keys:
-        keys.append([InlineKeyboardButton(text="💤 حریفی نیست — بازیکنان باید عضو شاخه شوند",
-                                          callback_data="mn:mil")])
-    keys.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
+def kb_duel(uid,page=0):
+    n=db.one('SELECT COUNT(*) FROM users WHERE country IS NOT NULL AND branch IS NOT NULL AND uid!=?',(uid,))[0]
+    page=max(0,min(page,max(0,(n-1)//10)))
+    rows=db.q('SELECT uid,name,country FROM users WHERE country IS NOT NULL AND branch IS NOT NULL AND uid!=? ORDER BY last_active DESC,uid LIMIT 10 OFFSET ?',(uid,page*10))
+    keys=[[InlineKeyboardButton(text=f"{countries.COUNTRIES.get(r['country'],{}).get('flag','')} {r['name']}",callback_data=f"du:{r['uid']}")] for r in rows]
+    nav=[]
+    if page:nav.append(InlineKeyboardButton(text='◀️ قبلی',callback_data=f'dpage:{page-1}'))
+    if (page+1)*10<n:nav.append(InlineKeyboardButton(text='بعدی ▶️',callback_data=f'dpage:{page+1}'))
+    if nav:keys.append(nav)
+    if db.kv_get(f'duel_to:{uid}'):keys.append([InlineKeyboardButton(text='✅ پذیرش چالش دریافتی',callback_data='dac:')])
+    keys.append([InlineKeyboardButton(text='🎛 منو',callback_data='mn:main')])
     return InlineKeyboardMarkup(inline_keyboard=keys)
 
 
@@ -716,14 +666,9 @@ def kb_market() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🌍 شورای امنیت", callback_data="mn:world")]])
 
 
-def kb_straits() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌉 هرمز", callback_data="str:هرمز"),
-         InlineKeyboardButton(text="🌉 باب‌المندب", callback_data="str:باب‌المندب")],
-        [InlineKeyboardButton(text="🌉 تایوان", callback_data="str:تایوان"),
-         InlineKeyboardButton(text="🌉 سوئز", callback_data="str:سوئز")],
-        [InlineKeyboardButton(text="📈 بازار جهانی", callback_data="mn:market"),
-         InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")]])
+def kb_straits():
+    from advanced_handlers import strait_keys
+    return strait_keys(None)
 
 
 def kb_sanction(uid) -> InlineKeyboardMarkup:
@@ -779,13 +724,15 @@ def kb_cancel_pol() -> InlineKeyboardMarkup:
 _pending: dict = {}
 
 
-def _pend_set(uid: int, chat_id: int, kind: str, ttl: int = 300):
-    _pending[(uid, chat_id)] = (kind, time.time() + ttl)
+def _pend_set(uid,chat_id,kind,ttl=300):
+    db.kv_set(f'input:{uid}:{chat_id}',json.dumps({'kind':kind,'expires':db.now()+ttl}))
 
 
-def _pend_pop(uid: int, chat_id: int):
-    kind, exp = _pending.pop((uid, chat_id), (None, 0))
-    return kind if kind and time.time() <= exp else None
+@db.atomic
+def _pend_pop(uid,chat_id):
+    key=f'input:{uid}:{chat_id}';d=db.jload(db.kv_get(key),{}) or {}
+    db.kv_del(key)
+    return d.get('kind') if d.get('expires',0)>=db.now() else None
 
 
 # ═══════════ 🚀 شروع ═══════════
@@ -852,9 +799,12 @@ _SLASH_MAP = {
     "menu": "منو", "help": "راهنما", "commands": "دستورها", "cmds": "دستورها",
     "buy": "خرید", "shop": "خرید", "arsenal": "زرادخانه",
     "attack": "حمله", "war": "جنگ", "fight": "حمله",
-    "trade": "تجارت", "profile": "پروفایل", "me": "پروفایل", "world": "جهان",
+    "military": "نظامی", "trade": "تجارت", "profile": "پروفایل", "me": "پروفایل", "world": "جهان",
     "invest": "سرمایه", "mine": "معدن", "infra": "زیرساخت",
     "revolt": "انقلاب", "welfare": "رفاه", "toll": "عوارض",
+    "fleet": "ناوگان", "energy": "انرژی", "sanctions": "تحریم",
+    "operations": "عملیات", "un": "سازمان‌ملل", "straits": "تنگه‌ها",
+    "cities": "شهرها", "supply": "مهمات", "contracts": "قراردادها", "gifts": "هدایا",
 }
 
 
@@ -867,13 +817,16 @@ async def cmd_slash_bridge(m: Message):
     word = _SLASH_MAP.get(name)
     if not word:
         return
-    m.text = word
+    _pend_pop(m.from_user.id,m.chat.id)  # explicit slash navigation is not a proposed name/payment
+    m = m.model_copy(update={'text':word}) if hasattr(m,'model_copy') else m
+    if not hasattr(m,'model_copy'):m.text=word
     return await fa_words(m)
 
 
 @router.message(Command("start"))
 @router.message(F.text.in_(["شروع", "استارت", "شروع کن", "شروع بازی", "استارت کن"]))
 async def cmd_start(m: Message):
+    _pend_pop(m.from_user.id,m.chat.id)
     state.ensure(m.from_user.id, m.from_user.first_name, m.chat.id)
     await _group_hello(bot, m.chat.id)
     if state.active(m.from_user.id):
@@ -900,70 +853,36 @@ async def cb_cy_page(c: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("cy:"))
-async def cb_country(c: CallbackQuery):
-    uid = c.from_user.id
-    if state.active(uid):
-        await c.answer("قبلاً ثبت‌نام کردی.", show_alert=True)
-        return
-    cid = c.data.split(":")[1]
-    if _taken(cid):                       # ✓ کشور گرفته‌شده — در همین گروه
-        await c.answer("✓ این کشور قبلاً گرفته شده — کشور دیگری انتخاب کن",
-                       show_alert=True)
-        return
-    ok = state.enlist(uid, cid, c.from_user.first_name or "سرباز")
-    if not ok:
-        await c.answer("خطا — دوباره امتحان کن.", show_alert=True)
-        return
-    db.ex("UPDATE users SET is_leader=1 WHERE uid=?", (uid,))   # 👑 بازیکن = رهبر
-    co = countries.COUNTRIES[cid]
-    t = texts
-    await c.message.delete()
-    await c.message.answer("\n".join([
-        t.hdr("ثبت‌نام تکمیل شد", "🎖"),
-        t.row("کشور", f"{co['flag']} {co['name']}"),
-        t.row("نقش", "👑 رهبر کشور"),
-        t.row("خزانه", "💰 ۱٬۰۰۰"),
-        "", "🪖 اولین قدم: «عضویت نظامی» — سپس تجهیزات بخر.",
-        "🎮 منوی اصلی: «منو»"]), parse_mode="HTML", reply_markup=kb_mil())
-    await c.answer()
+async def cb_country(c):
+    uid=c.from_user.id;cid=c.data.split(':',1)[1]
+    if not state.enlist(uid,cid,c.from_user.first_name or 'بازیکن'):
+        return await c.answer('کشور نامعتبر، گرفته‌شده، یا قبلاً کشور انتخاب کرده‌ای.',show_alert=True)
+    await c.answer('✅ ثبت شد')
+    msg='✅ کشور انتخاب شد.\n'+state.card(uid)+'\n\n'+rewards.pending_view(uid)
+    sent=await c.message.answer(msg,parse_mode='HTML',reply_markup=kb_main(uid))
+    _own(c,sent,uid)
+    await c.answer('✅ ثبت شد')
 
 
 # ═══════════ 🎛 منوها ═══════════
 
-async def _edit(c: CallbackQuery, text: str, kb=None):
+async def _edit(c,text,kb=None):
+    from aiogram.exceptions import TelegramBadRequest
+    text=notifications.personal(c.from_user.id,text)
+    with contextlib.suppress(Exception):await c.answer()
     try:
-        await c.message.edit_text(text[:4000], parse_mode="HTML",
-                                  reply_markup=kb or kb_main())
-    except Exception:
-        sent = await c.message.answer(text[:4000], parse_mode="HTML",
-                                      reply_markup=kb or kb_main())
-        _own(c.message, sent, c.from_user.id)
+        await c.message.edit_text(text,parse_mode='HTML',reply_markup=kb or kb_main(c.from_user.id))
+    except TelegramBadRequest as exc:
+        if 'not modified' in str(exc).lower():return
+        sent=await c.message.answer(text,parse_mode='HTML',reply_markup=kb or kb_main(c.from_user.id))
+        _own(c,sent,c.from_user.id)
 
 
 @router.callback_query(F.data.startswith("hp:"))
-async def cb_helppage(c: CallbackQuery):
-    try:
-        page = max(1, min(len(texts.HELP_PAGES), int(c.data.split(":")[1])))
-    except ValueError:
-        page = 1
-    body = texts.HELP_PAGES[page - 1]
-    # 📖 جایزه‌ی مطالعه — همه‌ی صفحات را بخوان، 300 دلار + نشان
-    uid = c.from_user.id
-    if state.active(uid):
-        read = int(db.kv_get(f"read:{uid}", "0") or 0)
-        if page > read:
-            db.kv_set(f"read:{uid}", str(page))
-            read = page
-        last = len(texts.HELP_PAGES)
-        if read >= last and not db.kv_get(f"guide_done:{uid}"):
-            db.kv_set(f"guide_done:{uid}", "1")
-            db.ex("UPDATE users SET money=money+300 WHERE uid=?", (uid,))
-            body = (body + "\n\n" + texts.hdr("جایزه‌ی مطالعه", "📖") +
-                    "🎓 همه‌ی راهنما را خواندی! +300 دلار جایزه" +
-                    " + نشان «📖 دانش‌آموخته» به پروفایلت اضافه شد"
-                    )[:4000]
-    await _edit(c, body, kb_help(page))
-    await c.answer()
+async def cb_helppage(c):
+    page=max(1,min(len(texts.HELP_PAGES),db.integer(c.data.split(':',1)[1],1)))
+    body=texts.HELP_PAGES[page-1]+guide.mark_read(c.from_user.id,page,len(texts.HELP_PAGES))
+    await _edit(c,body,kb_help(page))
 
 
 @router.callback_query(F.data.startswith("df:"))
@@ -980,13 +899,14 @@ async def cb_defense(c: CallbackQuery):
 
 @router.callback_query(F.data.startswith("mn:"))
 async def cb_menu(c: CallbackQuery):
+    _pend_pop(c.from_user.id,c.message.chat.id)
     uid = c.from_user.id
     what = c.data.split(":", 1)[1]
     if not state.active(uid) and what not in ("help",):
         await c.answer("⛔ اول «شروع»", show_alert=True)
         return
     if what == "main":
-        await _edit(c, state.card(uid), kb_main())
+        await _edit(c, state.card(uid), kb_main(uid))
     elif what == "mil":
         await _edit(c, texts.hdr("فرماندهی نظامی", "🪖") + "\n\nیکی را انتخاب کن:", kb_mil())
     elif what == "infra":
@@ -999,7 +919,7 @@ async def cb_menu(c: CallbackQuery):
     elif what == "world":
         await _edit(c, texts.hdr("شورای امنیت", "🌍") + "\n\nیکی را انتخاب کن:", kb_world())
     elif what == "me":
-        await _edit(c, state.card(uid), kb_main())
+        await _edit(c, state.card(uid), kb_main(uid))
     elif what == "battle":
         await _edit(c, military.battle(uid), kb_mil())
     elif what == "rest":
@@ -1099,28 +1019,15 @@ async def cb_menu(c: CallbackQuery):
     elif what == "black":
         await _edit(c, military.blackmarket(uid), kb_black(uid))
     elif what == "upgrade":
-        p = state.active(uid)
-        if not p:
-            await _edit(c, "⛔ اول «شروع»", kb_mil())
-        else:
-            own = db.q("SELECT iid FROM inventory WHERE uid=?", (uid,))
-            rows = []
-            for r in own:
-                it = countries.ITEMS[r["iid"]]
-                lvl = military.item_level(uid, r["iid"])
-                rows.append([InlineKeyboardButton(
-                    text=f"{it[1]} {it[0]} — سطح {texts.fa(lvl)}"
-                    + (" (مکس)" if lvl >= 3 else " ⬆️"),
-                    callback_data=f"up:{r['iid']}")])
-            rows.append([InlineKeyboardButton(text="🎛 منوی اصلی", callback_data="mn:main")])
-            await _edit(c, texts.hdr("ارتقای تجهیزات", "⬆️") + "\n\nتجهیزات خودت:",
-                        InlineKeyboardMarkup(inline_keyboard=rows))
+        from advanced_handlers import upgrade_view
+        body,keys=upgrade_view(uid)
+        await _edit(c,body,keys)
     elif what == "duel":
         await _edit(c, "\n".join([
             texts.hdr("نبرد تن‌به‌تن", "⚔️"), "",
             "حریفت را انتخاب کن:", "",
-            "🏅 برنده: 💰 ۶۰۰ · ⭐ ۱۵۰ XP",
-            "🩸 بازنده: −۳۰ جان",
+            "🏅 تجربهٔ محدود روزانه؛ بدون تولید پول رایگان",
+            "🩸 فرسایش واقعی تجهیزات و جان هر دو طرف",
             "⏱ حریف ۵ دقیقه فرصت دارد قبول کند."]), kb_duel(uid))
     elif what == "peace":
         msg = war.peace_request(uid)
@@ -1138,7 +1045,7 @@ async def cb_aim(c: CallbackQuery):
         return await c.answer("⚔️ اول در جنگ باشی!", show_alert=True)
     await _edit(c, texts.hdr("حمله‌ی هدفمند", "🎯") +
                 "\n\nکدام بخشِ زیرساخت دشمن را بزنیم؟\n"
-                "🎯 هدفمند = ۵۰٪ شانس آسیب مستقیم ۱۰–۱۶٪ به همان بخش.",
+                "ابتدا شهر، سپس بخش و تجهیزات را انتخاب کن؛ یک موج حداکثر ۱۸ واحد درصد خسارت می‌زند.",
                 kb_aims(c.from_user.id))
 
 
@@ -1190,27 +1097,17 @@ def panel_text() -> str:
 
 
 @router.callback_query(F.data.startswith("pm:"))
-async def cb_panel(c: CallbackQuery):
-    """🎛 پنل — منوی تازه و خصوصی برای زننده‌ی دکمه."""
-    uid = c.from_user.id
-    what = c.data.split(":", 1)[1]
-    p = state.active(uid)
-    if not p:
-        sent = await c.message.answer(texts.WELCOME, parse_mode="HTML",
-                                      reply_markup=kb_countries())
-        _own(c, sent, uid)
-        await c.answer()
-        return
-    views = {"menu": (state.card(uid), kb_main(uid)),
-             "help": (texts.HELP_PAGES[0], kb_help(1)),
-             "welf": (welfare.view(uid), kb_welfare(uid)),
-             "toll": (toll.status(uid), kb_toll(uid)),
-             "inv": (invest.view(uid), kb_invest(uid))}
-    txt, kb = views.get(what, (state.card(uid), kb_main(uid)))
-    with contextlib.suppress(Exception):
-        txt = txt[:4000]
-    sent = await c.message.answer(txt, parse_mode="HTML", reply_markup=kb)
-    _own(c, sent, uid)
+async def cb_panel(c):
+    uid=c.from_user.id;what=c.data.split(':',1)[1]
+    if not state.active(uid):
+        sent=await c.message.answer(texts.WELCOME,parse_mode='HTML',reply_markup=kb_countries())
+    else:
+        view={'menu':lambda:(state.card(uid),kb_main(uid)), 'help':lambda:(texts.HELP_PAGES[0],kb_help()),
+              'welf':lambda:(welfare.view(uid),kb_welfare(uid)), 'toll':lambda:(toll.status(uid),kb_toll(uid)),
+              'inv':lambda:(invest.view(uid),kb_invest(uid)), 'war':lambda:_v_war(uid)}
+        txt,kb=view.get(what,view['menu'])()
+        sent=await c.message.answer(txt,parse_mode='HTML',reply_markup=kb)
+    _own(c,sent,uid)
     await c.answer()
 
 
@@ -1342,24 +1239,13 @@ async def cb_ally(c: CallbackQuery):
 
 
 async def _send_bbc(chat_id):
-    """📡 خبر فوری معلق را با ایموجی جنگی بفرست."""
-    bbc = war.bbc_pop()
-    if bbc and bot:
-        with contextlib.suppress(Exception):
-            await bot.send_message(chat_id, texts.fx(bbc), parse_mode="HTML")
+    # News is persisted and delivered by the outbox worker, never a global list.
+    return None
 
 
-async def _delayed_missile(chat_id, uid):
-    """💥 برخورد موج موشکی بعد از زمان پرواز — ارسال خودکار به گروه."""
-    await asyncio.sleep(war.MISSILE_FLIGHT)
-    msg = war.resolve_missile(uid)
-    if msg and bot:
-        with contextlib.suppress(Exception):
-            await bot.send_message(chat_id, texts.fx(msg), parse_mode="HTML")
-        bbc = war.bbc_pop()
-        if bbc:
-            with contextlib.suppress(Exception):
-                await bot.send_message(chat_id, texts.fx(bbc), parse_mode="HTML")
+async def _delayed_missile(chat_id,uid):
+    # Compatibility only. The durable campaign worker owns all flight timers.
+    return None
 
 
 @router.callback_query(F.data.startswith("gno:"))
@@ -1373,35 +1259,14 @@ async def cb_geo_no(c: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("st:"))
-async def cb_strike(c: CallbackQuery):
-    uid = c.from_user.id
-    parts = c.data.split(":")
-    kind = parts[1]
-    count = int(parts[2]) if len(parts) > 2 else 1
-    target = parts[3] if len(parts) > 3 else None
-    if kind == "موشکی":
-        # 🚀 پرتاب — برخورد بعد از زمان پرواز؛ دشمن فرصت تقویت پدافند دارد
-        msg = war.launch_missile(uid, count, target)
-        if "در راه" in msg:
-            await _sticker(c.message.chat, "🚀")
-            if TEST_MODE:
-                msg += "\n\n" + war.resolve_missile(uid)
-            else:
-                asyncio.create_task(_delayed_missile(c.message.chat.id, uid))
-    else:
-        msg = war.strike(uid, kind, count, target)
-    try:
-        await c.message.edit_text(texts.fx(msg), parse_mode="HTML",
-                                  reply_markup=kb_strikes(uid))
-    except Exception:
-        await c.message.edit_text(msg, parse_mode="HTML",
-                                  reply_markup=kb_strikes(uid))
-    # 📡 خبر فوری بی‌بی‌سی — جداگانه در گروه، با ایموجی جنگی
-    bbc = war.bbc_pop()
-    if bbc and not TEST_MODE:
-        with contextlib.suppress(Exception):
-            await c.message.answer(texts.fx(bbc), parse_mode="HTML")
-    await c.answer()
+async def cb_strike(c):
+    parts=c.data.split(':')
+    if len(parts) not in (3,4):return await c.answer('⛔ دستور ناقص.',show_alert=True)
+    count=texts.to_int(parts[2])
+    if count is None:return await c.answer('⛔ تعداد نامعتبر.',show_alert=True)
+    target=parts[3] if len(parts)==4 else None
+    msg=war.strike(c.from_user.id,parts[1],count,target)
+    await _edit(c,msg,kb_strikes(c.from_user.id))
 
 
 # ═══════════ 💰 درآمد و تجارت — کاملاً دکمه‌ای ═══════════
@@ -1429,7 +1294,7 @@ async def cb_evc(c: CallbackQuery):
     base = (getattr(c.message, "text", "") or "").strip()
     txt = (base + "\n────\n" + r) if base else r
     with contextlib.suppress(Exception):
-        await c.message.edit_text(txt[:4000], parse_mode="HTML")
+        await c.message.edit_text(txt, parse_mode="HTML")
     await c.answer("✅ ثبت شد!")
 
 
@@ -1547,50 +1412,40 @@ async def cb_target_page(c: CallbackQuery):
 # ═══════════ ⚔️ اعلام جنگ — دکمه‌ای ═══════════
 
 @router.callback_query(F.data.startswith("dwr:"))
-async def cb_declare_war(c: CallbackQuery):
-    uid = c.from_user.id
-    msg = war.declare(uid, c.data.split(":")[1])
-    p = state.active(uid)
-    kb = kb_strikes(uid) if (p and war.war_of(p["country"])) else kb_pol()
-    await _edit(c, msg, kb)
-    if "اعلام جنگ" in msg:
-        await _sticker(c.message.chat, "💥")
-    await c.answer()
+async def cb_declare_war(c):
+    cid=c.data.split(':',1)[1]
+    rows=[[InlineKeyboardButton(text=f'{m.label} · حداقل {m.minimum//3600} ساعت',callback_data=f'wmode:{cid}:{k}')] for k,m in rules.MODES.items()]
+    rows.append([InlineKeyboardButton(text='↩️ انصراف',callback_data='mn:war')])
+    await _edit(c,'⚔️ نوع جنگ و هزینه را تأیید کن: مرزی ۲۰۰ دلار، سایر حالت‌ها ۵۰۰ دلار مجازی.\nکشور خالی هدف جنگ نیست. انتخاب نوع، اعلان رسمی و آغاز زمان آماده‌سازی است.',InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 # ═══════════ 📈 اقتصاد: تحریم · تنگه · بازار سیاه ═══════════
 
 @router.callback_query(F.data.startswith("snc:"))
-async def cb_sanction(c: CallbackQuery):
-    cid = c.data.split(":")[1]
-    if not cid:
-        await _edit(c, "\n".join([
-            texts.hdr("تحریم اقتصادی", "🚫"), "",
-            "کدام کشور؟ — 👑 فقط رهبر:",
-            "تحریم یعنی فروش نفتش نصف می‌شود."]), kb_sanction(c.from_user.id))
-    else:
-        await _edit(c, economy.sanction(c.from_user.id, cid), kb_market())
-    await c.answer()
+async def cb_sanction(c):
+    target=c.data.split(':')[1]
+    if not target:return await _edit(c,economy.sanctions_view(c.from_user.id),kb_sanction(c.from_user.id))
+    kb=InlineKeyboardMarkup(inline_keyboard=[
+       [InlineKeyboardButton(text='🚫 وضع تحریم ۲۴ساعته · $۳۰۰',callback_data=f'sapply:{target}')],
+       [InlineKeyboardButton(text='✅ فقط تحریم خودمان را لغو کن',callback_data=f'slift:{target}')],
+       [InlineKeyboardButton(text='↩️ بازار',callback_data='mn:market')]])
+    await _edit(c,economy.sanctions_view(c.from_user.id)+f"\nکشور انتخاب‌شده: {countries.COUNTRIES[target]['name']}",kb)
 
 
 @router.callback_query(F.data.startswith("str:"))
-async def cb_strait(c: CallbackQuery):
-    name = c.data.split(":", 1)[1]
-    if not name:
-        await _edit(c, "\n".join([
-            texts.hdr("تنگه‌های راهبردی", "🌉"), "",
-            "کدام تنگه؟ — 👑 فقط رهبر:",
-            "بستن تنگه نفت جهانی را گران می‌کند."]), kb_straits())
-    else:
-        await _edit(c, economy.toggle_strait(c.from_user.id, name), kb_straits())
-    await c.answer()
+async def cb_strait(c):
+    from game import straits
+    from advanced_handlers import strait_keys
+    name=c.data.split(':',1)[1]
+    key=next((k for k,v in straits.CONTROLS.items() if v[0]==name),None)
+    await _edit(c,straits.view(c.from_user.id,key),strait_keys(c.from_user.id,key))
 
 
 @router.callback_query(F.data.startswith("bb:"))
 async def cb_buy_black(c: CallbackQuery):
     uid = c.from_user.id
     msg = military.buy_black(uid, c.data.split(":")[1])
-    ok = "قاچاق شد" in msg or "از قبل" in msg
+    ok = "خریداری شد" in msg or "از قبل" in msg
     await c.answer("☠ قاچاق انجام شد" if ok else msg[:180], show_alert=not ok)
     await _edit(c, military.blackmarket(uid), kb_black(uid))
 
@@ -1635,7 +1490,7 @@ async def cb_party_new(c: CallbackQuery):
 
 @router.callback_query(F.data.startswith("pcancel:"))
 async def cb_pcancel(c: CallbackQuery):
-    _pending.pop((c.from_user.id, c.message.chat.id), None)
+    db.kv_del(f"input:{c.from_user.id}:{c.message.chat.id}")
     await _edit(c, "✋ لغو شد.", kb_pol())
     await c.answer()
 
@@ -1763,6 +1618,7 @@ async def fa_words(m: Message):
     if w == "/menu":
         w = "منو"
     arg = parts[1] if len(parts) > 1 else ""
+    if w=="سازمان" and arg=="ملل":w="سازمان‌ملل"
     uid = m.from_user.id
     # 💬 پیوی: بازی در گروه، خرید و مدیریت در پیوی — بدون دنیا، راهنما
     if m.chat.type == "private":
@@ -1773,32 +1629,29 @@ async def fa_words(m: Message):
                  getattr(m.from_user, "username", None))
     # ✍️ ورودی در انتظار (بیانیه / حزب) — قبل از فیلتر، بعد از ثبت حضور
     pend = _pend_pop(uid, m.chat.id)
+    if w=="منو":pend=None
     if pend:
         if w == "لغو":
             return await m.answer("✋ لغو شد — هر وقت خواستی از منو دوباره شروع کن.",
                                   parse_mode="HTML")
         if pend.startswith("pay:"):
-            to = int(pend.split(":", 1)[1])
-            amt = texts.to_int(w)
-            me = db.one("SELECT country, money FROM users WHERE uid=?", (uid,))
-            dst = db.one("SELECT name FROM users WHERE uid=?", (to,))
-            if not dst or not me:
-                return await m.answer("⛔ گیرنده پیدا نشد — از «منو» دوباره",
-                                      parse_mode="HTML")
-            if not amt or amt < 1:
-                return await m.answer(
-                    "⛔ فقط عدد بنویس — مثلاً <code>۵۰۰۰۰</code>",
-                    parse_mode="HTML")
-            if amt > me["money"]:
-                return await m.answer(
-                    "💰 پول کافی نداری — داری: " +
-                    texts.money(me["country"], me["money"]), parse_mode="HTML")
-            db.ex("UPDATE users SET money=money-? WHERE uid=?", (amt, uid))
-            db.ex("UPDATE users SET money=money+? WHERE uid=?", (amt, to))
-            return await m.answer(
-                "✅ <b>واریز دقیق</b>\n\n" +
-                texts.money(me["country"], amt) + " به " +
-                texts.mention(to, dst["name"]) + " رسید", parse_mode="HTML")
+            to = texts.to_int(pend.split(":",1)[1])
+            amount = texts.to_int(w)
+            return await m.answer(economy.transfer(uid,to,amount),parse_mode="HTML")
+        if pend.startswith("shipname:"):
+            from game import fleet
+            from maritime_handlers import fleet_keys
+            _,idx,kind=pend.split(":")
+            sent=await m.answer(fleet.build(uid,int(idx),kind,t),parse_mode="HTML",reply_markup=fleet_keys(uid))
+            _own(m,sent,uid)
+            return sent
+        if pend.startswith("opname:"):
+            from game import operations
+            from advanced_handlers import operation_keys
+            _,target,kind,mode=pend.split(":")
+            sent=await m.answer(operations.create(uid,target,t,kind,mode),parse_mode="HTML",reply_markup=operation_keys(uid))
+            _own(m,sent,uid)
+            return sent
         if pend == "stmt":
             sent = await m.answer(politics.statement(uid, t), parse_mode="HTML",
                                   reply_markup=kb_pol())
@@ -1857,9 +1710,8 @@ async def fa_words(m: Message):
         if _pp:
             with contextlib.suppress(Exception):
                 _up = welfare.check_uprising(_pp["country"])
-                if _up and not TEST_MODE and bot:
-                    await bot.send_message(m.chat.id, texts.fx(_up),
-                                           parse_mode="HTML")
+                if _up:
+                    pass  # persisted outbox owns delivery
     # 🛃 ابزار رهبر ایران: عوارض روشن/خاموش/برداشت — با اعلام عمومی
     if w == "عوارض" and arg:
         p_t = state.active(uid)
@@ -1867,9 +1719,9 @@ async def fa_words(m: Message):
             return await m.answer("🇮🇷 فقط رهبر ایران عوارض را مدیریت می‌کند.",
                                   parse_mode="HTML")
         if arg in ("روشن", "فعال"):
-            msg, ann = toll.toggle(uid)
+            msg, ann = toll.toggle(uid) if not toll.is_on() else ("✅ از قبل روشن است.", "")
         elif arg in ("خاموش", "بستن"):
-            msg, ann = toll.toggle(uid)
+            msg, ann = toll.toggle(uid) if toll.is_on() else ("✅ از قبل خاموش است.", "")
         elif arg == "برداشت":
             msg, ann = toll.collect(uid), ""
         else:
@@ -1896,13 +1748,18 @@ async def fa_words(m: Message):
         # 🧹 منوی قبلی این بازیکن آزاد می‌شود — حافظه کرشدار
         if len(last) == 2:
             with contextlib.suppress(Exception):
-                db.kv_del(f"mown:{m.chat.id}:{last[0]}")
+                pass  # keep ownership of older menus until the season reset
         _own(m, sent, uid)
         if act:
             db.kv_set(f"menu:{uid}", f"{sent.message_id}:{db.now()}")
         return sent
     # ⌨️ دستورهای فارسی بدون اسلش — همان منو، فقط تایپی
-    if state.active(uid) and w in WORD_VIEWS:
+    if w in WORD_VIEWS:
+        if not state.active(uid):
+            body=rewards.pending_view(uid) if w=="هدایا" else "⛔ ابتدا یک کشور آزاد انتخاب کن؛ این بخش پس از انتخاب کشور فعال می‌شود."
+            sent=await m.answer(body,parse_mode="HTML",reply_markup=kb_countries())
+            _own(m,sent,uid)
+            return sent
         txt, kb = WORD_VIEWS[w](uid)
         sent = await m.answer(txt, parse_mode="HTML", reply_markup=kb)
         _own(m, sent, uid)
@@ -1969,21 +1826,179 @@ async def fa_words(m: Message):
             parse_mode="HTML", reply_markup=kb_admin())
 
 
-def _find_country(txt: str):
-    """کشور را دقیق پیدا کن — نیم‌فاصله و ی/ک عربی نرمال می‌شود."""
-    def _n(s):
-        return (s or "").replace("\u200c", " ").replace("ي", "ی").replace("ك", "ک").strip()
-    t = _n(txt)
-    if not t:
-        return None
-    for cid, c in countries.COUNTRIES.items():
-        if t in (c["name"], cid) or _n(c["name"]) == t:
-            return cid
-    for cid, c in countries.COUNTRIES.items():
-        cn = _n(c["name"])
-        if cn and (t in cn or cn in t):
-            return cid
+def _find_country(txt):
+    def norm(s):return ' '.join((s or '').replace('ي','ی').replace('ك','ک').replace('\u200c',' ').strip().split()).lower()
+    t=norm(txt)
+    aliases={'امریکا':'us','آمريكا':'us','انگلستان':'gb','کره شمالی':'kp','کره جنوبی':'kr'}
+    if t in aliases:return aliases[t]
+    for cid,c in countries.COUNTRIES.items():
+        if t in (cid,norm(c['name'])):return cid
     return None
 
 
 router.message()(fa_words)
+
+
+# ═══ v41 extensions: same router, same menus, city-specific management ═══
+def kb_cities(uid):
+    p=state.active(uid);rows=[]
+    if p:
+        for i,name in enumerate(geo.CITIES[p['country']]):
+            rows.append([InlineKeyboardButton(text=f'🏙 {name}',callback_data=f'city:{i}')])
+    rows.append([InlineKeyboardButton(text='🎛 منو',callback_data='mn:main')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_city(uid,idx):
+    p=state.active(uid);rows=[]
+    if p and infra.city_index(p['country'],idx) is not None:
+        cid=p['country'];s=infra.city_state(cid,idx)
+        if s['name'] in geo.occupied(cid):
+            rows.append([InlineKeyboardButton(text='🕊 عملیات بازپس‌گیری شهر ×۱',callback_data=f'lib:{idx}')])
+        else:
+            for key,name,cost,_ in infra.BUILDINGS:
+                if key in ('naval','shipyard') and not geo.is_port(cid,idx):continue
+                row=db.one('SELECT level,hp,ready_at FROM structures WHERE cid=? AND city=? AND kind=?',(cid,idx,key))
+                level=(row['level'] if row else 0)+1
+                if not row or (level<=3 and row['hp']==100 and row['ready_at']<=db.now()):
+                    rows.append([InlineKeyboardButton(text=f'🏗 {name} · سطح {level} · {cost*level} دلار',callback_data=f'cbld:{idx}:{key}')])
+                if row and row['hp']<100:rows.append([InlineKeyboardButton(text=f'🔧 تعمیر {name}',callback_data=f'cfix:{idx}:{key}')])
+            for key in ('power','airport','port','industry','garrison'):
+                if (key!='port' or geo.is_port(cid,idx)) and s[key]<100:
+                    rows.append([InlineKeyboardButton(text=f'🔧 {infra.TARGETS[key]} +۲۰٪',callback_data=f'cfix:{idx}:{key}')])
+    rows.append([InlineKeyboardButton(text='⛽ انرژی و سوخت این شهر',callback_data=f'en:{idx}'),InlineKeyboardButton(text='🚢 نفت‌کش‌ها',callback_data='fv:')])
+    rows.append([InlineKeyboardButton(text='↩️ شهرها',callback_data='cities:'),InlineKeyboardButton(text='🗺 جبهه',callback_data='mn:front')])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data=='cities:')
+async def cb_cities(c):
+    p=state.active(c.from_user.id)
+    await _edit(c,geo.country_map(p['country']) if p else '⛔ اول «شروع»',kb_cities(c.from_user.id))
+
+
+@router.callback_query(F.data.startswith('city:'))
+async def cb_city(c):
+    idx=db.integer(c.data.split(':')[1],-1)
+    await _edit(c,infra.city_view(c.from_user.id,idx),kb_city(c.from_user.id,idx))
+
+
+@router.callback_query(F.data.startswith('cbld:'))
+async def cb_city_build(c):
+    _,idx,key=c.data.split(':');idx=int(idx)
+    msg=infra.build(c.from_user.id,key,idx)
+    await _edit(c,msg+'\n\n'+infra.city_view(c.from_user.id,idx),kb_city(c.from_user.id,idx))
+
+
+@router.callback_query(F.data.startswith('cfix:'))
+async def cb_city_fix(c):
+    _,idx,key=c.data.split(':');idx=int(idx)
+    msg=infra.repair(c.from_user.id,key,idx)
+    await _edit(c,msg+'\n\n'+infra.city_view(c.from_user.id,idx),kb_city(c.from_user.id,idx))
+
+
+@router.callback_query(F.data.startswith('acity:'))
+async def cb_attack_city(c):
+    p=state.active(c.from_user.id);w=war.war_of(p['country']) if p else None
+    if not w:return await c.answer('⛔ جنگی نیست.',show_alert=True)
+    cid=war._enemy(p['country'],w);idx=infra.city_index(cid,c.data.split(':')[1])
+    if idx is None:return await c.answer('⛔ شهر نامعتبر.',show_alert=True)
+    rows=[];s=infra.city_state(cid,idx)
+    for key,name in infra.TARGETS.items():
+        if key=='port' and not geo.is_port(cid,idx):continue
+        if key in infra._B and not db.one('SELECT 1 FROM structures WHERE cid=? AND city=? AND kind=?',(cid,idx,key)):continue
+        rows.append([InlineKeyboardButton(text=name,callback_data=f'aimk:{idx}.{key}')])
+    rows.append([InlineKeyboardButton(text='↩️ انتخاب شهر دیگر',callback_data='aim:')])
+    await _edit(c,f"🎯 هدف بعدی در شهر {s['name']}؛ کدام بخش؟\nتخریب هر بخش فقط روی همان شهر اثر مستقیم دارد.",InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith('wmode:'))
+async def cb_war_mode(c):
+    _,target,mode=c.data.split(':')
+    msg=war.declare(c.from_user.id,target,mode)
+    await _edit(c,msg,kb_strikes(c.from_user.id))
+
+
+@router.callback_query(F.data=='supply:')
+async def cb_resupply(c):
+    await _edit(c,campaign.resupply(c.from_user.id),kb_strikes(c.from_user.id))
+
+
+@router.callback_query(F.data.startswith('lib:'))
+async def cb_liberate(c):
+    idx=int(c.data.split(':')[1])
+    await _edit(c,campaign.liberate(c.from_user.id,idx),kb_city(c.from_user.id,idx))
+
+
+@router.callback_query(F.data=='staging:')
+async def cb_staging(c):
+    await _edit(c,'🏕 فقط به متحد رسمی اجازهٔ ۷۲ ساعتهٔ استفادهٔ تدارکاتی از پایگاه می‌دهی. زدن دوبارهٔ همان متحد، اجازه را لغو می‌کند.',kb_targets(c.from_user.id,'stage'))
+
+
+@router.callback_query(F.data.startswith('stage:'))
+async def cb_staging_grant(c):
+    await _edit(c,campaign.allow_staging(c.from_user.id,c.data.split(':')[1]),kb_pol())
+
+
+def contracts_view(uid):
+    p=state.active(uid);rows=[];lines=[texts.hdr('پیشنهادهای دریافتی','📜')]
+    if p:
+        cid=p['country']
+        for r in db.q('SELECT k,v FROM kv WHERE k LIKE ?',(f'contract:%:{cid}',)):
+            offer=db.jload(r['v'],{}) or {}
+            if offer.get('expires',0)>db.now() and offer.get('buyer')==uid:
+                source=r['k'].split(':')[1]
+                if source not in countries.COUNTRIES:continue
+                lines.append(f"از {countries.COUNTRIES[source]['name']}: {offer['qty']} کالا، {offer['price']} دلار")
+                rows.append([InlineKeyboardButton(text=f"✅ خرید از {countries.COUNTRIES[source]['name']}",callback_data=f'ctac:{source}')])
+        for r in db.q('SELECT k,v FROM kv WHERE k LIKE ?',(f'alliance_req:%:{cid}',)):
+            source=r['k'].split(':')[1]
+            if source in countries.COUNTRIES and db.now()-db.integer(r['v'])<=86400:
+                rows.append([InlineKeyboardButton(text=f"🤝 قبول اتحاد {countries.COUNTRIES[source]['name']}",callback_data=f'aac:{source}')])
+        w=war.war_of(cid)
+        if w and db.kv_get(f"peace:{w['id']}")==war._enemy(cid,w):
+            rows.append([InlineKeyboardButton(text='🕊 قبول صلح',callback_data='pac:')])
+    if not rows:lines.append('پیشنهاد معتبری نیست.')
+    rows.append([InlineKeyboardButton(text='🎛 منو',callback_data='mn:main')])
+    return '\n'.join(lines),InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data=='contracts:')
+async def cb_contracts(c):
+    body,kb=contracts_view(c.from_user.id)
+    await _edit(c,body,kb)
+
+
+@router.callback_query(F.data.startswith('ctac:'))
+async def cb_contract_accept(c):
+    await _edit(c,economy.contract_accept(c.from_user.id,c.data.split(':')[1]),kb_trade(c.from_user.id))
+
+
+@router.callback_query(F.data=='gifts:')
+async def cb_gifts(c):
+    from reward_handlers import gift_view,gift_keys
+    await _edit(c,gift_view(c.from_user.id),gift_keys(c.from_user.id))
+
+
+@router.callback_query(F.data=='adout:')
+async def cb_outbox(c):
+    if c.from_user.id!=config.OWNER_ID:return await c.answer('👑 فقط مالک.',show_alert=True)
+    await _edit(c,notifications.status(),kb_admin())
+
+
+WORD_VIEWS.update({
+    'شهرها':lambda uid:(geo.country_map(state.active(uid)['country']),kb_cities(uid)),
+    'پایگاه':lambda uid:(geo.country_map(state.active(uid)['country']),kb_cities(uid)),
+    'مهمات':lambda uid:(war.front(uid),kb_strikes(uid)),
+    'قراردادها':contracts_view,
+    'هدایا':lambda uid:(rewards.pending_view(uid),kb_main(uid)),
+})
+
+
+# Register extensions on this same router after the retained handlers are defined.
+__import__('advanced_handlers')
+
+__import__("maritime_handlers")
+WORD_VIEWS["تحریم"]=lambda uid:(economy.sanctions_view(uid),kb_sanction(uid))
+
+__import__("reward_handlers")

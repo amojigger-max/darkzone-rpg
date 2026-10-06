@@ -5,9 +5,9 @@ import texts
 
 
 def active(uid) -> dict:
-    """بازیکن ثبت‌نام‌شده با کشور — یا None."""
-    p = get(uid)
-    return p if p and p["country"] else None
+    import countries
+    p=get(uid)
+    return p if p and p['country'] in countries.COUNTRIES else None
 
 
 def get(uid) -> dict:
@@ -15,10 +15,11 @@ def get(uid) -> dict:
     return dict(r) if r else None
 
 
+@db.atomic
 def ensure(uid, name=None, chat_id=None, username=None):
     db.ex("INSERT OR IGNORE INTO users(uid,name,joined,last_active,chat_id,username,money) "
           "VALUES(?,?,?,?,?,?,1000)",
-          (uid, texts.esc(name or "")[:32], db.now(), db.now(), chat_id, username))
+          (uid, texts.esc((name or "")[:32]), db.now(), db.now(), chat_id, username))
     db.ex("UPDATE users SET last_active=?, chat_id=COALESCE(?,chat_id) WHERE uid=?",
           (db.now(), chat_id, uid))
     # نام جای‌نگهدار (PlayerNN) با نام واقعی تازه می‌شود + @آیدی ذخیره
@@ -27,34 +28,36 @@ def ensure(uid, name=None, chat_id=None, username=None):
         if row:
             old = row["name"] or ""
             if name and (not old or old.startswith("Player")):
-                db.ex("UPDATE users SET name=? WHERE uid=?", (texts.esc(name)[:32], uid))
+                db.ex("UPDATE users SET name=? WHERE uid=?", (texts.esc(name[:32]), uid))
             if username and username != (row["username"] or ""):
                 db.ex("UPDATE users SET username=? WHERE uid=?", (username, uid))
 
 
+@db.atomic
 def enlist(uid, country: str, name: str) -> bool:
-    """ثبت‌نام در کشور — فقط یک بار (ردیفِ موجود بدون کشور را کامل می‌کند)."""
     import countries
-    if country not in countries.COUNTRIES:
+    from game import infra,defense,rewards
+    if type(uid) is not int or not 0<uid<2**63 or country not in countries.COUNTRIES:
         return False
-    p = get(uid)
+    p=get(uid)
+    if p and p['country']:return False
+    if db.one('SELECT 1 FROM users WHERE country=?',(country,)) or db.one('SELECT 1 FROM country_claims WHERE country=?',(country,)):
+        return False
     if p:
-        if p["country"]:
-            return False
-        db.ex("UPDATE users SET country=?, "
-              "money=CASE WHEN money>0 THEN money ELSE 1000 END, "
-              "name=CASE WHEN name='' OR name IS NULL THEN ? ELSE name END "
-              "WHERE uid=?", (country, texts.esc(name)[:32], uid))
-        _starter_kit(uid, country)
-        return True
-    db.ex("INSERT INTO users(uid,name,country,money,joined,last_active) VALUES(?,?,?,?,?,?)",
-          (uid, texts.esc(name)[:32], country, 1000, db.now(), db.now()))
-    _starter_kit(uid, country)
+        db.ex("UPDATE users SET country=?,is_leader=1, name=CASE WHEN name IS NULL OR name='' THEN ? ELSE name END WHERE uid=? AND (country IS NULL OR country='')",(country,texts.esc((name or '')[:32]),uid))
+    else:
+        db.ex('INSERT INTO users(uid,name,country,is_leader,money,joined,last_active,chat_id) VALUES(?,?,?,1,1000,?,?,?)',(uid,texts.esc((name or '')[:32]),country,db.now(),db.now(),db.GAME.get()))
+    db.ex('INSERT INTO country_claims(country,uid,claimed) VALUES(?,?,?)',(country,uid,db.now()))
+    db.kv_set(f'claimed:{country}',db.now())
+    _starter_kit(uid,country)
+    infra.ensure(country);defense.ensure(country)
+    rewards.award_pending(uid)
+    db.audit('country_selected',uid,country=country)
     return True
 
 
 def _starter_kit(uid: int, country: str):
-    """🎁 سلاحِ شروع — پهپاد شناسایی رایگان؛ حمله از دقیقه‌ی اول."""
+    """🎁 سلاحِ شروع — پهپاد شناسایی رایگان؛ با رعایت دورهٔ محافظت و آماده‌سازی جنگ."""
     db.ex("INSERT INTO inventory(uid,iid,qty,dur) VALUES(?,?,1,100) "
           "ON CONFLICT(uid,iid) DO UPDATE SET qty=qty+1",
           (uid, f"drone_{country}",))
@@ -64,6 +67,7 @@ def xp_need(level: int) -> int:
     return 120 + level * 80
 
 
+@db.atomic
 def gain_xp(uid, xp: int):
     p = get(uid)
     if not p:
@@ -94,7 +98,7 @@ def card(uid) -> str:
         t.row("کشور", f"{c.get('flag', '')} {c.get('name', '—')}"
               + (f" — {politics.regime_of(p['country'])}"
                  if politics.regime_of(p["country"]) else "")),
-        t.row("نقش", "👑 رهبر کشور"),
+        t.row("نقش", "👑 رهبر کشور" if p["is_leader"] else "شهروند کشور"),
         t.DASH,
         t.row("تخصص", f"🎖 {sname} — +{t.fa(pct)}٪ {spec}"),
         t.row("شاخه", mil.branch_name(p) or "غیرنظامی"),
@@ -142,6 +146,7 @@ def geo_colonies(cid):
     return geo.colonies_of(cid)
 
 
+@db.atomic
 def ration(uid) -> str:
     """جیره‌ی روزانه + زنجیره‌ی حضور — روزهای پیوسته جایزه‌ی بیشتر."""
     p = active(uid)
@@ -166,15 +171,13 @@ def ration(uid) -> str:
                  * _wl2.welfare_mult(p["country"]))  # ⚙️ + 🏗 + 😊
     tax_note = ""
     col = geo_colony(p["country"])
-    if col:                                    # ⛓ زیر یوغ مستعمره
-        cut = amount * 3 // 10
-        amount -= cut
-        tax_note = f"\n⛓ مالیات مستعمره‌ای به {countries.COUNTRIES[col]['name']}: −{t.fa(cut)}"
-    mine = geo_colonies(p["country"])
-    if mine:                                   # 👑 خراج مستعمره‌ها
-        add = amount * len(mine) // 6
-        amount += add
-        tax_note = f"\n👑 خراج {t.fa(len(mine))} مستعمره: +{t.fa(add)}"
+    if col and col in countries.COUNTRIES:
+        owner=db.one('SELECT uid FROM users WHERE country=? AND is_leader=1',(col,))
+        if owner:
+            cut=amount*3//10;amount-=cut
+            db.ex('UPDATE users SET money=money+? WHERE uid=?',(cut,owner['uid']))
+            db.audit('colony_tax',uid,to=owner['uid'],amount=cut)
+            tax_note=f"\n⛓ {cut} دلار از همین جیره به خزانهٔ {countries.COUNTRIES[col]['name']} منتقل شد."
     # 🛢 سهم نفت — درآمد واقعی کشور، بین بازیکنانش
     from game import economy as _eco
     oil = _eco.oil_share(p["country"])
@@ -210,6 +213,7 @@ def ration(uid) -> str:
             f"خزانه: {texts.money(p['country'], get(uid)['money'])}{tax_note}{bonus}")
 
 
+@db.atomic
 def daily(uid) -> str:
     """🎁 جایزه‌ی روزانه با رگه‌ی پیوسته — هر روز بیا، بیشتر ببر."""
     p = active(uid)
@@ -246,6 +250,7 @@ def daily(uid) -> str:
 WORK_CD = 600          # ⏱ هر ۱۰ دقیقه یک شیفت — تاکتیکی، نه اسپمی
 
 
+@db.atomic
 def work(uid) -> str:
     """🔨 کار کن و پول بگیر — رایگان، همیشه در جریان بازی."""
     p = active(uid)
@@ -254,9 +259,11 @@ def work(uid) -> str:
     t = texts
     if db.now() - int(db.kv_get(f"work:{uid}", "0")) < WORK_CD:
         left = WORK_CD - (db.now() - int(db.kv_get(f"work:{uid}", "0")))
-        return (f"⏳ خسته‌ای! {t.fa(max(60, (left + 59) // 60))} دقیقه دیگر "
+        return (f"⏳ خسته‌ای! {t.fa(max(1, (left + 59) // 60))} دقیقه دیگر "
                 "دوباره کار کن.")
     db.kv_set(f"work:{uid}", str(db.now()))
+    from game import quests
+    quests.on_event(uid, "کار")
     from game import military as _mil
     from game import infra as _ifr
     from game import welfare as _wl

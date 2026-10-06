@@ -1,6 +1,6 @@
 """💰 جنگ جهانی — اقتصاد زنده: نفت، دلار، تورم، تنگه‌ها، تحریم.
 
-هسته‌ی واقعی ۲۰۲۶: قیمت‌ها با دلار و تورم بالا می‌روند؛
+مدل انتزاعی و متعادل بازی: قیمت‌ها با دلار و تورم بالا می‌روند؛
 بستن تنگه نفت را جهانی می‌کند؛ جنگ و شورش تورم می‌آورد.
 """
 import json
@@ -15,9 +15,17 @@ from game import state
 DEFAULTS = dict(oil=82, dollar=1.0, inflation=0.0, hormuz=1, bab=1, taiwan=1, suez=1)
 
 
-def world() -> dict:
-    w = dict(DEFAULTS)
-    w.update(db.jload(db.kv_get("econ"), {}) or {})
+def world():
+    w=dict(DEFAULTS);raw=db.jload(db.kv_get('econ'),{}) or {}
+    if not isinstance(raw,dict):raw={}
+    for key,lo,hi in (('oil',45,140),('dollar',0.90,1.25),('inflation',0,0.25)):
+        try:
+            import math
+            value=float(raw.get(key,w[key]))
+            w[key]=max(lo,min(hi,value)) if math.isfinite(value) else w[key]
+        except (ValueError,TypeError):pass
+    for key in ('hormuz','bab','taiwan','suez','bosporus','malacca'):
+        w[key]=0 if raw.get(key,1) in (0,'0') else 1
     return w
 
 
@@ -37,32 +45,35 @@ def real_price(base: int) -> int:
     return base
 
 
+@db.atomic
 def tick():
-    """هر تیک جهانی — بازار حرکت می‌کند (ربات هوشمند بازار)."""
-    w = world()
-    # نفت: عرضه/تقاضا + تنگه‌ها
-    straits = (w["hormuz"] + w["bab"] + w["taiwan"] + w["suez"]) / 4   # 1=باز
-    w["oil"] = max(35, min(240, w["oil"] * (1 + random.uniform(-0.03, 0.03)
-                                            + (1 - straits) * 0.06)))
-    # دلار: جنگ فعال + بسته‌بودن تنگه‌ها + تورم → دلار قوی
-    wars_n = len(db.q("SELECT 1 FROM wars WHERE status='active'"))
-    w["dollar"] = max(0.8, min(4.0, w["dollar"] * (1 + random.uniform(-0.01, 0.01)
-                                                   + wars_n * 0.004
-                                                   + (1 - straits) * 0.01)))
-    # تورم: از دلار و جنگ می‌خورد
-    w["inflation"] = max(0.0, min(3.0, w["inflation"] + random.uniform(-0.004, 0.006)
-                                  + wars_n * 0.003))
-    _save(w)
+    """Bounded, mean-reverting ten-minute indicators; opening menus never accelerates inflation."""
+    import hashlib
+    from game import straits,notifications
+    straits.tick()
+    for r in db.q("SELECT k,v FROM kv WHERE k LIKE 'sanction_pair:%'"):
+        if db.integer(r['v'])<=db.now():
+            _,source,target=r['k'].split(':');db.kv_del(r['k'])
+            if source in countries.COUNTRIES and target in countries.COUNTRIES:
+                notifications.emit(f"✅ تحریم {countries.COUNTRIES[source]['name']} علیه {countries.COUNTRIES[target]['name']} منقضی شد؛ آثار همین تحریم برداشته شد.",cids=[source,target],key=f"sanction_expire:{source}:{target}:{r['v']}")
+    bucket=db.now()//MARKET_STEP
+    if db.integer(db.kv_get('market_tick'),-1)==bucket:return world()
+    rng=random.Random(int(hashlib.sha256(f'{db.GAME.get()}:{bucket}:macro'.encode()).hexdigest(),16))
+    w=world();closed=sum(not straits.is_open(k) for k in straits.CONTROLS)
+    for k in straits.CONTROLS:w[k]=int(straits.is_open(k))
+    wars=min(8,db.one("SELECT COUNT(*) FROM wars WHERE status='active'")[0])
+    oil_target=82*(1+0.04*closed+0.008*wars)
+    dollar_target=1+0.012*closed+0.008*wars
+    inflation_target=0.01+0.004*closed+0.006*wars
+    w['oil']=max(45,min(140,w['oil']+0.15*(oil_target-w['oil'])+rng.uniform(-0.4,0.4)))
+    w['dollar']=max(.90,min(1.25,w['dollar']+.10*(dollar_target-w['dollar'])+rng.uniform(-.002,.002)))
+    w['inflation']=max(0,min(.25,w['inflation']+.08*(inflation_target-w['inflation'])+rng.uniform(-.0003,.0003)))
+    _save(w);db.kv_set('market_tick',bucket)
     return w
 
 
-def sanction_shock(cid: str):
-    """تحریم AI — تورم جهانی بالا می‌رود و کشور هدف علامت می‌خورد."""
-    w = world()
-    w["inflation"] = min(3.0, w["inflation"] + 0.05)
-    w["oil"] = min(240, w["oil"] * 1.05)
-    _save(w)
-    db.kv_set(f"sanction:{cid}", str(db.now()))
+def sanction_shock(cid):
+    return None  # compatibility: removed autonomous NPC sanctions
 
 
 def fx(cid: str) -> float:
@@ -82,84 +93,59 @@ def fx(cid: str) -> float:
     return base * mult
 
 
-def sanctioned(cid: str) -> bool:
-    ts = int(db.kv_get(f"sanction:{cid}", "0") or 0)
-    return ts and db.now() - ts < 24 * 3600
+def sanctioned(cid):
+    rows=db.q('SELECT v FROM kv WHERE k LIKE ?',(f'sanction_pair:%:{cid}',))
+    return any(db.integer(r['v'])>db.now() for r in rows)
 
 
+@db.atomic
 def on_war_start():
-    """جنگ تازه → شوک بازار."""
-    w = world()
-    w["oil"] = min(240, w["oil"] * 1.15)
-    w["dollar"] = min(4.0, w["dollar"] * 1.05)
-    _save(w)
+    w=world();w['oil']=min(140,w['oil']*1.02);w['dollar']=min(1.25,w['dollar']*1.005);_save(w)
 
 
-def toggle_strait(uid: int, name: str) -> str:
-    """بستن/بازکردن تنگه — فقط رهبران."""
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع» — کشورت را انتخاب کن."
-    key = {"هرمز": "hormuz", "باب‌المندب": "bab", "تایوان": "taiwan", "سوئز": "suez"}.get(name)
-    if not key:
-        return "⛔ تنگه: هرمز · باب‌المندب · تایوان · سوئز"
-    w = world()
-    w[key] = 0 if w[key] else 1
-    _save(w)
-    st = "بسته 🚫" if not w[key] else "باز ✅"
-    effect = ("نفت جهانی بالا می‌رود — اقتصاد دنیا لرزید!"
-              if not w[key] else "عبور آزاد شد — بازار آرام گرفت.")
-    return f"🌉 تنگه‌ی <b>{name}</b>: {st}\n└─ {effect}"
+def toggle_strait(uid,name):
+    from game import straits
+    key=next((k for k,v in straits.CONTROLS.items() if v[0]==name),None)
+    if key is None:return '🕊 این گذرگاه کنترل‌کنندهٔ قابل‌انتخاب ندارد.'
+    return straits.set_open(uid,key,not straits.is_open(key))
 
 
 # ═══════════ خزانه‌ی کشورها (از نفت) ═══════════
-# هر کشور: bpd = بشکه در روز (تقریبی واقعی ۲۰۲۶)
+# هر کشور: bpd = بشکه در روز (صرفاً یادگار توصیفی نسخهٔ قبلی؛ مبنای پاداش نیست)
 OIL_BPD = {"ir": 1400, "us": 13200, "ru": 9800, "cn": 4000, "de": 20, "gb": 70,
            "fr": 10, "tr": 70, "il": 0, "kp": 10, "kr": 100, "jp": 30, "in": 700,
            "pk": 90, "sa": 9600, "ae": 2800, "iq": 4200, "sy": 100, "ua": 100, "it": 60}
 
 
-def oil_share(cid: str) -> int:
-    """🛢 سهم روزانه‌ی هر بازیکن از درآمد نفت کشورش — واقعی و شفاف.
-
-    بشکه‌درروز × قیمت نفت / ۸۰۰۰ → سهم کل کشور در روز؛
-    بسته‌بودن هرمز فروش کشورهای خلیج فارس را ۶۵٪ کم می‌کند،
-    تحریم آن را نصف؛ بین بازیکنان کشور تقسیم می‌شود. سقف: ۲۰۰.
-    """
-    w = world()
-    bpd = OIL_BPD.get(cid, 0)
-    pot = bpd * w["oil"] / 8000.0
-    if w["hormuz"] == 0 and cid in ("ir", "sa", "ae", "iq", "kw"):
-        pot *= 0.35                      # تنگه بسته — فروش افت کرد
-    if sanctioned(cid):
-        pot *= 0.5                       # تحریم — خریدار کمتر پیدا می‌شود
-    n = db.one("SELECT COUNT(*) n FROM users WHERE country=?", (cid,))["n"]
-    if n <= 0:
-        return 0
-    return int(min(200, pot / n))
+def oil_share(cid):
+    """Bounded per-country resource dividend for balance, not real oil production."""
+    from game import catalog
+    n=db.one('SELECT COUNT(*) n FROM users WHERE country=?',(cid,))['n']
+    if n<1:return 0
+    factor=catalog.country_factor(cid)
+    penalty=0.85 if sanctioned(cid) else 1.0
+    return int(100*factor*penalty/n)
 
 
-def sanction(leader_uid: int, target: str) -> str:
-    """تحریم کشور — رهبر یک کشور دیگر. یک سیستم واحد با تحریم AI:
-    نرخ ارز ضعیف‌تر (fx)، سهم نفت نصف، ۲۴ ساعت اعتبار."""
-    p = state.active(leader_uid)
-    if not p:
-        return "⛔ اول «شروع» — کشورت را انتخاب کن."
-    if target == p["country"]:
-        return "🤡 کشور خودت را تحریم کنی؟"
-    import countries
-    tc = countries.COUNTRIES.get(target)
-    if not tc:
-        return "⛔ کشور نامعتبر."
-    if sanctioned(target):
-        db.kv_set(f"sanction:{target}", "0")
-        return f"✅ تحریم {tc['flag']} {tc['name']} برداشته شد."
-    db.kv_set(f"sanction:{target}", str(db.now()))
-    w = world()
-    w["oil"] = min(240, w["oil"] * 1.06)
-    _save(w)
-    return (f"🚫 تحریم {tc['flag']} {tc['name']} — "
-            f"نفتش نصف فروخته می‌شود و پولش ضعیف شد (۲۴ ساعت).")
+@db.atomic
+def sanction(leader_uid,target):
+    from game import campaign,notifications
+    p,err=campaign._leader(leader_uid)
+    if err:return err
+    if target not in countries.COUNTRIES or target==p['country']:return '⛔ کشور نامعتبر.'
+    if not db.one('SELECT 1 FROM users WHERE country=? AND is_leader=1',(target,)):return '🕊 کشور خالی تحریم نمی‌شود.'
+    key=f"sanction_pair:{p['country']}:{target}"
+    if db.integer(db.kv_get(f'un_shield:{target}'))>db.now():return '🕊 رفع تحریمِ مصوب سازمان ملل هنوز معتبر است.'
+    if db.integer(db.kv_get(key))>db.now():
+        db.kv_del(key);msg='✅ فقط تحریم وضع‌شده توسط کشور شما لغو شد.'
+    else:
+        cd=f"sanction_cd:{p['country']}"
+        if db.now()-db.integer(db.kv_get(cd))<3600:return '⏳ میان وضع تحریم‌ها یک ساعت فاصله لازم است.'
+        if not db.debit(leader_uid,300):return '💰 وضع تحریم ۳۰۰ دلار هزینه دارد.'
+        db.kv_set(key,db.now()+86400);db.kv_set(cd,db.now())
+        msg=f"🚫 تحریم ۲۴ ساعتهٔ {countries.COUNTRIES[target]['name']} ثبت شد؛ اثر اقتصادی محدود و بدون انباشت نامحدود."
+    notifications.emit(msg,cids=[p['country'],target],uids=[leader_uid])
+    return msg
 
 
 def market() -> str:
@@ -170,13 +156,13 @@ def market() -> str:
                ("تایوان", w["taiwan"]), ("سوئز", w["suez"])]
     return "\n".join([
         t.hdr("بازار جهانی", "📈"),
-        t.row("نفت برنت", f"🛢 ${w['oil']:.0f}"),
+        t.row("شاخص نفت بازی", f"🛢 ${w['oil']:.0f}"),
         t.row("شاخص دلار", f"💵 ×{w['dollar']:.2f}"),
         t.row("تورم", f"📊 {w['inflation'] * 100:.1f}٪"),
         "", "🌉 <b>تنگه‌ها:</b>",
         *[f"▫️ {n}: {'باز ✅' if v else 'بسته 🚫'}" for n, v in straits],
         t.K,
-        f"💰 قیمت تجهیزات = پایه × {texts.fa(f'{price_factor():.2f}')} — جنگ و تورم خزانه را می‌خورند"])
+        "💰 قیمت تجهیزات ثابت است؛ کالاهای تجاری با بازار نوسان می‌کنند. دلارها همه مجازی‌اند."])
 
 
 # ═══════════ 💼 تجارت: صادرات و واردات ═══════════
@@ -212,39 +198,42 @@ GOODS = [
 GOODS_MAP = {g[0]: g for g in GOODS}
 MARKET_STEP = 600          # هر ۱۰ دقیقه بازار حرکت می‌کند
 TRADE_CAP = 20             # سقف نگهداری هر کالا
-SPREAD = 0.05              # اختلاف خرید/فروش ۵٪ — سود از حرکت بازار می‌آید
+SPREAD = 0.025              # اختلاف خرید/فروش ۵٪ — سود از حرکت بازار می‌آید
 
 
-def _mk(gid: str) -> dict:
-    """ضریب بازارِ کالا — گام تصادفی هر ۱۰ دقیقه، محدوده ۰٫۶۵ تا ۱٫۶۰."""
-    st = db.jload(db.kv_get(f"mk:{gid}"), None) or {"t": 0, "m": 1.0, "prev": 1.0}
-    now = db.now()
-    if now - int(st.get("t", 0)) >= MARKET_STEP:
-        st = {"t": now, "prev": st["m"],
-              "m": max(0.65, min(1.60, st["m"] * random.uniform(0.90, 1.12)))}
-        db.kv_set(f"mk:{gid}", json.dumps(st, ensure_ascii=False))
+@db.atomic
+def _mk(gid):
+    import hashlib
+    if gid not in GOODS_MAP:raise ValueError('unknown good')
+    st=db.jload(db.kv_get(f'mk:{gid}'),{}) or {'t':0,'m':1.0,'prev':1.0}
+    bucket=db.now()//MARKET_STEP
+    if int(st.get('t',0))//MARKET_STEP!=bucket:
+        rng=random.Random(int(hashlib.sha256(f'{db.GAME.get()}:{gid}:{bucket}'.encode()).hexdigest(),16))
+        prev=max(.85,min(1.15,float(st.get('m',1))))
+        st={'t':bucket*MARKET_STEP,'prev':prev,'m':max(.85,min(1.15,prev+.12*(1-prev)+rng.uniform(-.015,.015)))}
+        db.kv_set(f'mk:{gid}',json.dumps(st))
     return st
 
 
-def good_price(gid: str) -> float:
-    """قیمت لحظه‌ای کالا — نفت از قیمت جهانی زنده می‌آید."""
-    w = world()
-    base = w["oil"] if gid == "oil" else GOODS_MAP[gid][3]
-    # بازار فقط با ضریب کالا حرکت می‌کند — رند و قابل محسابه
-    return round(base * _mk(gid)["m"]) // 10 * 10
+def good_price(gid):
+    w=world();base=w['oil'] if gid=='oil' else GOODS_MAP[gid][3]
+    return max(1,round(base*_mk(gid)['m']*w['dollar']*(1+w['inflation'])))
 
 
 def holdings(uid: int) -> dict:
-    return db.jload(db.kv_get(f"inv:{uid}"), {}) or {}
+    from game import portfolios
+    portfolios.ensure(uid)
+    raw=db.jload(db.kv_get(f"trade:{uid}"), {}) or {}
+    return {k:db.integer(v,0,0,TRADE_CAP) for k,v in raw.items() if k in GOODS_MAP}
 
 
 def _save_holdings(uid: int, h: dict):
-    db.kv_set(f"inv:{uid}", json.dumps(h, ensure_ascii=False))
+    db.kv_set(f"trade:{uid}", json.dumps(h, ensure_ascii=False))
 
 
 def trade_view(uid) -> str:
     """📊 میز تجارت — قیمت‌ها با جهت، موجودی انبار، قواعد شفاف."""
-    p = db.one("SELECT * FROM users WHERE uid=?", (uid,))
+    p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
     t = texts
@@ -264,130 +253,176 @@ def trade_view(uid) -> str:
               "📌 + یعنی واردات (خرید) · − یعنی صادرات (فروش)",
               f"📦 سقف انبار هر کالا: {t.fa(TRADE_CAP)} · اختلاف خرید و فروش ۵٪"]
     if sanctioned(p["country"]):
-        lines.append("🚫 تحریمی! خرید ۱۵٪ گران‌تر، فروش ۱۵٪ ارزان‌تر — اول تحریم را بردار.")
+        lines.append("🚫 تحریمی! خرید ۱۵٪ گران‌تر و فروش ۱۵٪ ارزان‌تر؛ منبع و زمان پایان در منوی تحریم‌ها. اثرها روی هم جمع نمی‌شوند.")
     return "\n".join(lines)
 
 
-def trade_buy(uid: int, gid: str, qty: int = 1) -> str:
-    p = db.one("SELECT * FROM users WHERE uid=?", (uid,))
-    if not p:
-        return "⛔ اول «شروع»"
-    if gid not in GOODS_MAP:
-        return "⛔ چنین کالایی نداریم."
-    # 🚢 بندر آسیب‌دیده → واردات متوقف (زیرساخت جنگی)
-    from game import infra as _if
-    if not _if.port_ok(p["country"]):
-        return ("🚢 بندر کشورت خراب است — واردات متوقف شده.\n"
-                "🪖 نظامی → 🏗 زیرساخت کشور → تعمیر بندر")
-    qty = max(1, min(5, qty))
-    h = holdings(uid)
-    held = int(h.get(gid, 0))
-    if held + qty > TRADE_CAP:
-        return f"📦 انبارت پر است — سقف {texts.fa(TRADE_CAP)}؛ داری {texts.fa(held)}"
-    unit = good_price(gid) * (1 + SPREAD)
-    if sanctioned(p["country"]):
-        unit *= 1.15
-    cost = int(unit * qty)
-    if p["money"] < cost:
-        return f"💰 پول کم داری — لازم: {texts.money(p['country'], cost)}"
-    db.ex("UPDATE users SET money=money-? WHERE uid=?", (cost, uid))
-    h[gid] = held + qty
-    _save_holdings(uid, h)
-    g = GOODS_MAP[gid]
-    return (f"📥 واردات: {g[2]} <b>{g[1]}</b> ×{texts.fa(qty)} — "
-            f"پرداخت {texts.money(p['country'], cost)}\n"
-            f"📦 انبار: {texts.fa(h[gid])} · 💰 باقی خزانه: "
-            f"{texts.money(p['country'], p['money'] - cost)}")
+@db.atomic
+def trade_buy(uid,gid,qty=1):
+    import math
+    from game import straits,infra
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    if gid not in GOODS_MAP or type(qty) is not int or not 1<=qty<=5:return '⛔ کالا و تعداد صحیح ۱ تا ۵ لازم است.'
+    err=straits.trade_check(uid)
+    if err:return err
+    if not infra.port_ok(p['country']):return '🚢 بندر عملیاتی کافی نیست؛ ابتدا تعمیر کن.'
+    h=holdings(uid);held=db.integer(h.get(gid),0,0,TRADE_CAP)
+    if held+qty>TRADE_CAP:return '📦 انبار پر است؛ سقف هر کالا ۲۰ واحد.'
+    pool=market_pool()
+    if pool['stock'].get(gid,0)<qty:return '📦 عرضهٔ این کالا در بازار تمام شده است؛ فروش بازیکنان آن را تأمین می‌کند.'
+    cost=math.ceil(good_price(gid)*(1+SPREAD)*(1.15 if sanctioned(p['country']) else 1)*qty)
+    if not db.debit(uid,cost):return f'💰 پول کافی نیست؛ لازم: {cost} دلار.'
+    h[gid]=held+qty;_save_holdings(uid,h)
+    pool['stock'][gid]-=qty;pool['money']+=cost;_save_pool(pool)
+    db.audit('market_buy',uid,good=gid,qty=qty,cost=cost)
+    return f"📥 واردات {GOODS_MAP[gid][1]} ×{qty}؛ پرداخت {cost} دلار مجازی. انبار: {h[gid]} / {TRADE_CAP}."
 
 
-def trade_sell(uid: int, gid: str, qty: int = 1) -> str:
-    p = db.one("SELECT * FROM users WHERE uid=?", (uid,))
-    if not p:
-        return "⛔ اول «شروع»"
-    if gid not in GOODS_MAP:
-        return "⛔ چنین کالایی نداریم."
-    h = holdings(uid)
-    held = int(h.get(gid, 0))
-    if held <= 0:
-        return f"📦 {GOODS_MAP[gid][1]} در انبارت نداری — اول واردات کن."
-    qty = max(1, min(qty, held))
-    unit = good_price(gid) * (1 - SPREAD)
-    if sanctioned(p["country"]):
-        unit *= 0.85
-    rev = int(unit * qty)
-    db.ex("UPDATE users SET money=money+? WHERE uid=?", (rev, uid))
-    h[gid] = held - qty
-    if h[gid] <= 0:
-        del h[gid]
-    _save_holdings(uid, h)
-    g = GOODS_MAP[gid]
-    return (f"📤 صادرات: {g[2]} <b>{g[1]}</b> ×{texts.fa(qty)} — "
-            f"درآمد {texts.money(p['country'], rev)}\n"
-            f"📦 انبار: {texts.fa(h.get(gid, 0))} · 💰 خزانه: "
-            f"{texts.money(p['country'], p['money'] + rev)}")
+@db.atomic
+def trade_sell(uid,gid,qty=1):
+    import math
+    from game import straits,infra
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    if gid not in GOODS_MAP or type(qty) is not int or not 1<=qty<=5:return '⛔ کالا و تعداد صحیح ۱ تا ۵ لازم است.'
+    err=straits.trade_check(uid)
+    if err:return err
+    if not infra.port_ok(p['country']):return '🚢 بندر عملیاتی کافی نیست؛ ابتدا تعمیر کن.'
+    h=holdings(uid);held=db.integer(h.get(gid),0,0,TRADE_CAP)
+    if held<qty:return '📦 موجودی کالا کافی نیست.'
+    revenue=math.floor(good_price(gid)*(1-SPREAD)*(.85 if sanctioned(p['country']) else 1)*qty)
+    pool=market_pool()
+    if revenue>pool['money']:return '🏦 نقدینگی بازار برای این سفارش کافی نیست؛ پول ساخته نمی‌شود.'
+    h[gid]=held-qty
+    if not h[gid]:h.pop(gid)
+    _save_holdings(uid,h)
+    pool['stock'][gid]+=qty;pool['money']-=revenue;_save_pool(pool)
+    db.ex('UPDATE users SET money=money+? WHERE uid=?',(revenue,uid))
+    db.audit('market_sell',uid,good=gid,qty=qty,revenue=revenue)
+    return f"📤 صادرات {GOODS_MAP[gid][1]} ×{qty}؛ درآمد {revenue} دلار مجازی. انبار: {h.get(gid,0)} / {TRADE_CAP}."
 
 
 # ═══════════ 📜 قرارداد تجاری — رهبر ═══════════
 CONTRACT_CD = 1200        # ۲۰ دقیقه بین قراردادها (مخصوص هر شخص)
 
 
-def contract(uid: int, target: str) -> str:
-    """📜 قرارداد با یک کشور — صادرات کالا یا نفت با پاداش قرارداد."""
-    p = db.one("SELECT * FROM users WHERE uid=?", (uid,))
+@db.atomic
+def contract(uid,target):
+    from game import campaign,notifications
+    p,err=campaign._leader(uid)
+    if err:return err
+    if target not in countries.COUNTRIES or target==p['country']:return '⛔ طرف قرارداد نامعتبر.'
+    buyer=db.one('SELECT uid FROM users WHERE country=? AND is_leader=1',(target,))
+    if not buyer:return '🕊 قرارداد با کشور خالی یا NPC وجود ندارد؛ طرف واقعی لازم است.'
+    w=campaign.war_of(p['country'])
+    if w and campaign.enemy(p['country'],w)==target:return '⚔️ ابتدا صلح کنید.'
+    if db.now()-db.integer(db.kv_get(f'ct:{uid}'))<CONTRACT_CD:return '⏳ بین قراردادهای انجام‌شده ۲۰ دقیقه فاصله لازم است.'
+    goods=holdings(uid);gid=next((g for g,n in goods.items() if g in GOODS_MAP and n>0),None)
+    if not gid:return '📦 ابتدا یک کالای واقعی در انبارت داشته باش؛ قرارداد پول رایگان ایجاد نمی‌کند.'
+    price=max(1,int(good_price(gid)))
+    offer={'seller':uid,'buyer':buyer['uid'],'good':gid,'qty':1,'price':price,'expires':db.now()+1800}
+    db.kv_set(f"contract:{p['country']}:{target}",json.dumps(offer))
+    msg=f"📜 پیشنهاد فروش {GOODS_MAP[gid][1]} ×۱ به {countries.COUNTRIES[target]['name']} ارسال شد؛ قیمت {price} دلار.\nتا پذیرش رهبر خریدار، هیچ پول یا کالایی جابه‌جا نمی‌شود؛ مهلت ۳۰ دقیقه."
+    notifications.emit(msg,cids=[p['country'],target],uids=[uid])
+    return msg
+
+
+@db.atomic
+def contract_accept(uid,source):
+    from game import campaign,notifications
+    p,err=campaign._leader(uid)
+    if err:return err
+    key=f"contract:{source}:{p['country']}"
+    offer=db.jload(db.kv_get(key),{}) or {}
+    if not offer or offer.get('buyer')!=uid or offer.get('expires',0)<db.now():return '⛔ پیشنهاد معتبر یا مهلت باقی‌مانده‌ای نیست.'
+    from game import straits
+    route_error=straits.trade_check(uid)
+    if route_error:return route_error
+    seller=state.active(offer['seller'])
+    if not seller or seller['country']!=source or not seller['is_leader']:return '⛔ فروشنده دیگر رهبر این کشور نیست.'
+    route_error=straits.trade_check(seller['uid'])
+    if route_error:return route_error
+    if any(db.integer(db.kv_get(f'sanction_pair:{a}:{b}'))>db.now() for a,b in ((source,p['country']),(p['country'],source))):return '🚫 قرارداد مستقیم بین دو طرف تحریم تا لغو همان تحریم مجاز نیست.'
+    w=campaign.war_of(source)
+    if w and campaign.enemy(source,w)==p['country']:return '⚔️ در زمان جنگ، پذیرش این قرارداد مجاز نیست.'
+    if db.now()-db.integer(db.kv_get(f"ct:{seller['uid']}"))<CONTRACT_CD:return '⏳ فروشنده به‌تازگی قرارداد دیگری انجام داده است.'
+    gid=offer['good'];qty=offer['qty'];cost=offer['price']
+    a,b=holdings(seller['uid']),holdings(uid)
+    if a.get(gid,0)<qty:return '📦 کالای فروشنده دیگر کافی نیست؛ پیشنهاد منقضی شده است.'
+    if b.get(gid,0)+qty>TRADE_CAP:return '📦 انبار خریدار جا ندارد.'
+    if not db.debit(uid,cost):return '💰 موجودی خریدار کافی نیست.'
+    a[gid]-=qty;b[gid]=b.get(gid,0)+qty
+    _save_holdings(seller['uid'],a);_save_holdings(uid,b)
+    db.ex('UPDATE users SET money=money+? WHERE uid=?',(cost,seller['uid']))
+    db.kv_set(f"ct:{seller['uid']}",db.now());db.kv_del(key)
+    db.audit('bilateral_trade',uid,seller=seller['uid'],good=gid,qty=qty,price=cost)
+    msg=f'📜 قرارداد دوطرفه انجام شد: {qty} واحد {GOODS_MAP[gid][1]} در برابر {cost} دلار مجازی؛ پول از حساب خریدار به فروشنده منتقل شد.'
+    notifications.emit(msg,cids=[source,p['country']],uids=[uid,seller['uid']])
+    return msg
+
+
+@db.atomic
+def transfer(uid,to,amount):
+    from game import notifications
+    if type(amount) is not int or not 1<=amount<=10**12:return '⛔ مبلغ باید عدد صحیح مثبت و در محدودهٔ مجاز باشد.'
+    a,b=state.active(uid),state.active(to)
+    if not a or not b or uid==to:return '⛔ هر دو طرف باید ثبت‌نام‌شده و متفاوت باشند.'
+    if not db.debit(uid,amount):return '💰 موجودی کافی نیست.'
+    db.ex('UPDATE users SET money=money+? WHERE uid=?',(amount,to))
+    db.audit('transfer',uid,to=to,amount=amount)
+    msg=f"💸 {texts.mention(uid,a['name'])} → {texts.mention(to,b['name'])}\n{amount:,} دلار مجازی منتقل شد؛ بدون کارمزد."
+    notifications.emit(msg,uids=[uid,to])
+    return msg
+
+
+@db.atomic
+def market_pool():
+    p=db.jload(db.kv_get('market_pool'),None)
     if not p:
-        return "⛔ اول «شروع»"
-    if not p:
-        return "⛔ اول «شروع» — کشورت را انتخاب کن."
-    if target == p["country"]:
-        return "🤡 با خودت قرارداد بستی؟"
-    if db.now() - int(db.kv_get(f"ct:{uid}", "0")) < CONTRACT_CD:
-        return "⏳ بین دو قرارداد ۲۰ دقیقه فاصله بنداز."
-    tc = countries.COUNTRIES.get(target)
-    if not tc:
-        return "⛔ کشور نامعتبر."
-    # در جنگ با هدف؟ قرارداد نیست
-    if db.one("SELECT 1 FROM wars WHERE status='active' AND "
-              "((a=? AND b=?) OR (a=? AND b=?))",
-              (p["country"], target, target, p["country"])):
-        return f"⚔️ با {tc['name']} در جنگی — اول صلح، بعد تجارت."
-    db.kv_set(f"ct:{uid}", str(db.now()))
-    w = world()
-    oiler = OIL_BPD.get(p["country"], 0) >= 1000
-    h = holdings(uid)
-    own_goods = [g for g in GOODS if int(h.get(g[0], 0)) > 0]
-    if oiler:
-        # 🛢 قرارداد نفتی — پیش‌فروش سهم یک‌روزه، پاداش ۱۵ تا ۴۰٪
-        raw = OIL_BPD[p["country"]] * w["oil"] / 8000.0
-        if w["hormuz"] == 0 and p["country"] in ("ir", "sa", "ae", "iq", "kw"):
-            raw *= 0.35
-        if sanctioned(p["country"]):
-            raw *= 0.5
-        pay = int(raw * random.uniform(1.15, 1.40))
-        kind = "صادرات نفت"
-        detail = "🛢 سهم یک‌روزه‌ی نفت کشورت با پاداش قرارداد"
-    elif own_goods:
-        gid, nm, em, _ = random.choice(own_goods)
-        qty = min(int(h[gid]), random.randint(1, 3))
-        unit = good_price(gid) * (1 - SPREAD)
-        if sanctioned(p["country"]):
-            unit *= 0.85
-        pay = int(unit * qty * random.uniform(1.15, 1.45))
-        h[gid] = int(h[gid]) - qty
-        if h[gid] <= 0:
-            del h[gid]
-        _save_holdings(uid, h)
-        kind = f"صادرات {nm}"
-        detail = f"{em} {nm} ×{texts.fa(qty)} با پاداش قرارداد"
-    else:
-        db.kv_set(f"ct:{uid}", "0")
-        return ("📦 کالایی در انبارت نیست و کشورت هم نفت‌خون نیست — "
-                "اول از میز تجارت واردات کن.")
-    db.ex("UPDATE users SET money=money+? WHERE uid=?", (pay, uid))
-    return "\n".join([
-        texts.hdr("قرارداد تجاری امضا شد", "📜"),
-        f"{countries.COUNTRIES[p['country']]['flag']} → {tc['flag']} {tc['name']}",
-        f"📌 نوع: {kind} — {detail}",
-        f"💰 درآمد: +{texts.money(p['country'], pay)}",
-        f"💼 خزانه: {texts.money(p['country'], p['money'] + pay)}",
-        "⏱ قرارداد بعدی: ۲۰ دقیقه دیگر",
-    ])
+        p={'money':500000,'stock':{g:500 for g in GOODS_MAP}}
+        _save_pool(p)
+        db.audit('market_seed',money=500000,units_per_good=500)
+    return p
+
+
+def _save_pool(p):db.kv_set('market_pool',json.dumps(p,sort_keys=True))
+
+
+@db.atomic
+def apply_sanction(uid,target):
+    p=state.active(uid)
+    if p and db.integer(db.kv_get(f"sanction_pair:{p['country']}:{target}"))>db.now():
+        return '✅ تحریم کشور شما از قبل فعال است؛ این دکمه آن را لغو یا تمدید نمی‌کند.'
+    return sanction(uid,target)
+
+
+@db.atomic
+def lift_sanction(uid,target):
+    from game import campaign,notifications
+    p,err=campaign._leader(uid)
+    if err:return err
+    if target not in countries.COUNTRIES:return '⛔ کشور نامعتبر.'
+    key=f"sanction_pair:{p['country']}:{target}"
+    if not db.kv_get(key):return '✅ تحریمی از سوی کشور شما وجود ندارد؛ تحریم تازه‌ای ایجاد نشد.'
+    db.kv_del(key)
+    remaining=sanctioned(target)
+    msg='✅ تحریمِ کشور شما لغو شد؛ '+('تحریم سایر کشورها هنوز برقرار است.' if remaining else 'همهٔ اثرهای تحریم هدف برداشته شد.')
+    db.audit('sanction_lift',uid,target=target)
+    notifications.emit(msg,cids=[p['country'],target],uids=[uid])
+    return msg
+
+
+def sanctions_view(uid):
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    lines=[texts.hdr('تحریم‌ها؛ منبع و مهلت دقیق','🚫')]
+    for r in db.q("SELECT k,v FROM kv WHERE k LIKE 'sanction_pair:%' ORDER BY k"):
+        _,source,target=r['k'].split(':');until=db.integer(r['v'])
+        if until<=db.now() or p['country'] not in (source,target):continue
+        leader=db.one('SELECT uid,name FROM users WHERE country=? AND is_leader=1',(source,))
+        tag=texts.mention(leader['uid'],leader['name']) if leader else 'بدون رهبر'
+        lines.append(f"{countries.COUNTRIES[source]['name']} → {countries.COUNTRIES[target]['name']} · {max(1,(until-db.now())//60)} دقیقه\n{tag}")
+    if len(lines)==1:lines.append('تحریم فعالی برای کشور شما ثبت نشده است.')
+    lines.append('فقط صادرکننده می‌تواند تحریم خودش را لغو کند؛ انقضای ۲۴ ساعته خودکار است. تحریم‌های هم‌زمان فقط یک اثر ۱۵٪ دارند، نه چند اثر جمع‌شونده.')
+    return '\n'.join(lines)

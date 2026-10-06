@@ -19,11 +19,12 @@ def my_party(uid) -> dict | None:
     return dict(r) if r else None
 
 
+@db.atomic
 def found(uid, name: str, ideology: str) -> str:
     p = state.active(uid)
     if not p:
         return "⛔ اول «شروع»"
-    if not p["branch"]:
+    if p["branch"] in (None, ""):
         return "🪖 ساخت حزب نیازمند عضویت نظامی است — «ارتشی»"
     if my_party(uid):
         return "🔒 قبلاً در حزبی هستی."
@@ -63,132 +64,81 @@ def list_parties(uid) -> str:
     return "\n".join(lines)
 
 
-def join(uid, name: str) -> str:
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    party = db.one("SELECT * FROM parties WHERE name=? AND country=?",
-                   (name, p["country"]))
-    if not party:
-        return "⛔ حزبی با این نام در کشورت نیست — فهرست احزاب (منو)"
-    if p["party_id"] == party["id"]:
-        return "🔒 از قبل عضوی."
-    db.ex("UPDATE users SET party_id=? WHERE uid=?", (party["id"], uid))
-    db.ex("UPDATE parties SET members=members+1, power=power+5 WHERE id=?",
-          (party["id"],))
-    return (f"🏛 به حزب <b>{party['name']}</b> پیوستی.\n"
-            f"⚡ قدرت حزب: {texts.fa(party['power'] + 5)}")
+@db.atomic
+def join(uid,name):
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    party=db.one('SELECT * FROM parties WHERE name=? AND country=?',(name,p['country']))
+    if not party:return '⛔ حزب در همین کشور پیدا نشد.'
+    if p['party_id']==party['id']:return '✅ از قبل عضو هستی.'
+    old=my_party(uid)
+    if old and old['leader_uid']==uid:return '👑 رهبر حزب نمی‌تواند با جابه‌جایی، اعضا یا قدرت ساختگی تولید کند.'
+    if old:db.ex('UPDATE parties SET members=MAX(0,members-1),power=MAX(0,power-5) WHERE id=?',(old['id'],))
+    db.ex('UPDATE users SET party_id=? WHERE uid=?',(party['id'],uid))
+    db.ex('UPDATE parties SET members=members+1,power=power+5 WHERE id=?',(party['id'],))
+    return f"🏛 به حزب {party['name']} پیوستی؛ شمارش اعضای حزب قبلی هم اصلاح شد."
 
 
+@db.atomic
 def statement(uid, body: str) -> str:
     """بیانیه‌ی رسمی حزب — ثبت دائمی + قدرت می‌دهد."""
     p = state.active(uid)
     party = my_party(uid)
     if not p or not party:
         return "⛔ بیانیه فقط برای اعضای حزب — اول حزب بساز یا عضو شو (منو → احزاب)."
-    if len(body) < 10:
+    if not isinstance(body,str) or not 10<=len(body)<=800:
         return "⛔ متن بیانیه کوتاه است — حداقل ۱۰ حرف."
+    if db.now()-db.integer(db.kv_get(f"statement:{uid}"))<600:return "⏳ هر ۱۰ دقیقه یک بیانیه."
+    db.kv_set(f"statement:{uid}",db.now())
     t = texts
     db.ex("INSERT INTO statements(party_id,uid,body,ts) VALUES(?,?,?,?)",
-          (party["id"], uid, texts.esc(body)[:400], db.now()))
-    db.ex("UPDATE parties SET power=power+10 WHERE id=?", (party["id"],))
+          (party["id"], uid, texts.esc(body[:800]), db.now()))
+    db.ex("UPDATE parties SET power=MIN(150,power+10) WHERE id=?", (party["id"],))
     return "\n".join([
         t.hdr("بیانیه‌ی رسمی", "📰"),
         f"🏛 حزب: <b>{party['name']}</b>",
         f"🗺 کشور: {countries.COUNTRIES[party['country']]['flag']} "
         f"{countries.COUNTRIES[party['country']]['name']}",
-        t.K, f"«{texts.esc(body)[:400]}»", t.K,
+        t.K, f"«{texts.esc(body[:800])}»", t.K,
         "⚡ قدرت حزب +۱۰ — بیانیه‌ها در آرشیو کشور می‌مانند."])
 
 
-def rebel(uid) -> str:
-    """شورش — حزب قدرتمند علیه دولت."""
-    p = state.active(uid)
-    party = my_party(uid)
-    if not p or not party:
-        return "⛔ شورش نیازمند حزب است."
-    if party["leader_uid"] != uid:
-        return "👑 فقط رهبر حزب می‌تواند شورش اعلام کند."
-    if party["power"] < REBEL_POWER:
-        return f"⚡ قدرت حزب {party['power']}/{REBEL_POWER} — بیانیه بده و عضو جذب کن."
-    if party["rebel"]:
-        return "🔴 شورش از قبل فعال است."
-    db.ex("UPDATE parties SET rebel=1 WHERE id=?", (party["id"],))
-    t = texts
-    return "\n".join([
-        t.hdr("اعلام شورش", "🚩"),
-        f"🏛 حزب <b>{party['name']}</b> در "
-        f"{countries.COUNTRIES[party['country']]['name']} قیام کرد!",
-        t.K,
-        "دولت پاسخ خواهد داد — نبرد سرنوشت کشور است.",
-        "⚔️ شورشیان: رزم کنید (منو) — هر پیروزی به شورش نزدیک‌تر است."])
+def rebel(uid):
+    return revolt_start(uid)
 
 
 # ═══════════ جاسوسی ═══════════
 
-def spy(uid, target: str) -> str:
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    tc = countries.COUNTRIES.get(target)
-    if not tc or target == p["country"]:
-        return "⛔ کشور هدف نامعتبر یا خودت است."
-    if db.now() - int(db.kv_get(f"spy:{uid}", "0")) < SPY_COOLDOWN:
-        return (f"⏳ شبکه‌ی جاسوسی در حال بازسازی است — "
-                f"{texts.fa(SPY_COOLDOWN // 60)} دقیقه.")
-    db.kv_set(f"spy:{uid}", str(db.now()))
-    my = countries.COUNTRIES[p["country"]]
-    chance = max(0.15, 0.35 + (my["tech"] - tc["tech"]) * 0.12)
-    db.ex("UPDATE users SET spy_ops=spy_ops+1 WHERE uid=?", (uid,))
-    from game import quests
-    quests.on_event(uid, "جاسوسی")
-    if random.random() < chance:
-        from game import defense as _d, geo as _g
-        kind = random.choice(["shield", "ammo", "cities", "plan"])
-        if kind == "shield":
-            _d.ensure(target)
-            rr = db.q("SELECT layer, level FROM defense WHERE cid=? "
-                      "ORDER BY level DESC LIMIT 3", (target,))
-            info = "🛡 سپر ملی‌شان: " + " · ".join(
-                f"{r['layer']} {texts.fa(r['level'])}" for r in rr)
-        elif kind == "ammo":
-            from game import war as _w
-            wr = _w.war_of(target)
-            if wr:
-                am = int(db.kv_get(f"ammo:{wr['id']}:{target}", "0") or 0)
-                info = (f"🎯 مهمات {tc['name']} در جنگ جاری: "
-                        f"{texts.fa(am)}/{texts.fa(_w._ammo_total(target))}")
-            else:
-                info = f"🕊 {tc['name']} در هیچ جنگی نیست"
-        elif kind == "cities":
-            occ = _g.occupied(target)
-            info = ("🏚 شهرهای اشغال‌شده‌ی آن‌ها: " + " · ".join(occ)) if occ \
-                else "🟢 همه‌ی شهرهایشان آزاد است"
-        else:
-            info = random.choice([
-                f"📅 برنامه‌ی رزمی {tc['name']} لو رفت — حمله در راه است",
-                f"💰 خزانه‌ی {tc['name']} در حال خالی شدن است",
-                f"🚀 {tc['name']} تجهیزات نو وارد زرادخانه کرده",
-                f"🤝 {tc['name']} در حال عقد پیمان پنهانی است",
-                f"🔴 در {tc['name']} شورشی در حال شکل‌گیری است",
-            ])
-        db.ex("INSERT INTO spyops(uid,target,success,info,ts) VALUES(?,?,1,?,?)",
-              (uid, target, info, db.now()))
-        state.gain_xp(uid, 40)
-        return (f"🕵️ <b>عملیات موفق</b> در {tc['flag']} {tc['name']}\n"
-                f"└─ {info}\n⭐ +{texts.fa(40)} XP")
-    # 💀 شکست: جان و جریمه‌ی واقعی — دیگر فقط حرف نیست
-    db.ex("UPDATE users SET hp=MAX(10,hp-20), money=MAX(0,money-300) WHERE uid=?",
-          (uid,))
-    return (f"🕵️ <b>مأمور دستگیر شد</b> در {tc['flag']} {tc['name']}\n"
-            f"└─ ارتباط قطع شد — جان −{texts.fa(20)}\n"
-            f"💰 جریمه: {texts.money(p['country'], 300)}")
+@db.atomic
+def spy(uid,target):
+    from game import campaign,infra,notifications,quests
+    p,err=campaign._leader(uid)
+    if err:return err
+    if target not in countries.COUNTRIES or target==p['country']:return '⛔ کشور هدف نامعتبر.'
+    if not db.one('SELECT 1 FROM users WHERE country=? AND is_leader=1',(target,)):return '🕊 کشور خالی اطلاعات نظامی بازیکنی ندارد.'
+    if db.now()-db.integer(db.kv_get(f'spy:{uid}'))<SPY_COOLDOWN:return '⏳ فاصلهٔ عملیات جاسوسی ۵ دقیقه است.'
+    if not db.debit(uid,100):return '💰 هزینهٔ عملیات اطلاعاتی ۱۰۰ دلار است.'
+    db.kv_set(f'spy:{uid}',db.now())
+    db.ex('UPDATE users SET spy_ops=spy_ops+1 WHERE uid=?',(uid,))
+    quests.on_event(uid,'جاسوسی')
+    success=random.random()<0.55
+    if success:
+        st=infra.state_of(target)
+        pending=db.one("SELECT COUNT(*) n FROM missions WHERE attacker=? AND status='pending'",(target,))['n']
+        info=f"برق {st['power']}٪ · صنعت {st['industry']}٪ · مأموریت واقعاً در راه: {pending}"
+        state.gain_xp(uid,30)
+    else:
+        info='گزارش قابل اتکایی به دست نیامد؛ هیچ برنامهٔ ساختگی برای دشمن تولید نشد.'
+    db.ex('INSERT INTO spyops(uid,target,success,info,ts) VALUES(?,?,?,?,?)',(uid,target,int(success),info,db.now()))
+    # Intel itself stays with the acting player; counterpart is notified of the operation only.
+    notifications.emit(f"🕵 عملیات اطلاعاتی {countries.COUNTRIES[p['country']]['name']} دربارهٔ {countries.COUNTRIES[target]['name']} ثبت شد.",cids=[p['country'],target],uids=[uid])
+    return ('🕵 گزارش معتبر بازی: ' if success else '🕵 عملیات ناموفق: ')+info
 
 
 # ═══ 🔥 شورش — تغییر رژیم، آزادی از دست‌نشانده ═══
 
 REVOLT_COST = 400
-REVOLT_WINDOW = 1800          # ۳۰ دقیقه فرصت حمایت
+REVOLT_WINDOW = 48 * 3600
 
 # رژیم‌های ممکن — اولی وضع موجود (خالی)؛ بعدی‌ها با شورش
 REGIMES = {
@@ -227,7 +177,7 @@ def revolt_view(uid) -> str:
     t = texts
     rv = _revolt(cid)
     members = db.q("SELECT uid FROM users WHERE country=?", (cid,))
-    need = max(2, (len(members) + 1) // 2)
+    need = max(1, (len(members) + 1) // 2)
     col = geo.colony_of(cid)
     lines = [t.hdr("شورش مردمی", "🔥"),
              f"🌍 کشور: {c['flag']} {c['name']}"
@@ -236,7 +186,7 @@ def revolt_view(uid) -> str:
     if col:
         lines.append(f"⛓ زیر یوغ دست‌نشانده‌ی "
                      f"{__import__('countries').COUNTRIES[col]['name']} — "
-                     "شورش موفق = آزادی!")
+                     "استقلال به بازپس‌گیری شهرها نیاز دارد.")
     if rv:
         sup = len(rv.get("sup", []))
         left = max(0, int(rv["ts"]) + REVOLT_WINDOW - db.now()) // 60
@@ -249,11 +199,12 @@ def revolt_view(uid) -> str:
         lines += [t.DASH,
                   f"💰 هزینه‌ی آغاز شورش: {t.money(cid, REVOLT_COST)}",
                   f"✊ لازم: حمایت {t.fa(need)} نفر از اعضای کشور",
-                  "🏆 پیروزی = تغییر رژیم" + (" و آزادی از یوغ!" if col else ""),
+                  "🏆 پیروزی = تغییر رژیم" + (" بدون انتقال خودکار شهرهای اشغال‌شده" if col else ""),
                   "", "هر شهروندی می‌تواند آغاز کند."]
     return "\n".join(lines)
 
 
+@db.atomic
 def revolt_start(uid) -> str:
     """🔥 آغاز شورش — هزینه دارد، ریسک دارد."""
     import json as _json
@@ -264,59 +215,39 @@ def revolt_start(uid) -> str:
     if not p:
         return "⛔ اول «شروع»"
     cid = p["country"]
+    if db.now()-db.integer(db.kv_get(f"revolt_cd:{cid}")) < 86400:
+        return "⏳ شروع جنبش تازه هر ۲۴ ساعت یک بار."
     if _revolt(cid):
         return "🔥 شورش از قبل فعال است — همکاری کن!"
     if p["money"] < REVOLT_COST:
         return f"💰 آغاز شورش {texts.money(cid, REVOLT_COST)} می‌خواهد."
     db.ex("UPDATE users SET money=money-? WHERE uid=?", (REVOLT_COST, uid))
+    db.kv_set(f"revolt_cd:{cid}", db.now())
     db.kv_set(f"revolt:{cid}", _json.dumps(
         {"by": uid, "ts": db.now(), "sup": [uid]}, ensure_ascii=False))
     return revolt_view(uid) + "\n\n📣 شهروندان! بیایید!"
 
 
-def revolt_support(uid) -> str:
-    """✊ حمایت از شورش فعال."""
-    import db
-    import texts
-    from game import state, geo
-    from game import war as _war
-    p = state.active(uid)
-    if not p:
-        return "⛔ اول «شروع»"
-    cid = p["country"]
-    rv = _revolt(cid)
-    if not rv:
-        return "🔥 شورشی فعال نیست — اول یکی آغازش کند."
-    sup = rv.get("sup", [])
-    if uid not in sup:
-        sup.append(uid)
-    rv["sup"] = sup
-    import json as _json
-    db.kv_set(f"revolt:{cid}", _json.dumps(rv, ensure_ascii=False))
-    members = db.q("SELECT uid FROM users WHERE country=?", (cid,))
-    need = max(2, (len(members) + 1) // 2)
-    if len(sup) < need:
-        return revolt_view(uid)
-    # 🏆 پیروزی شورش — رژیم عوض می‌شود، یوغ می‌شکند
-    db.kv_del(f"revolt:{cid}")
-    i = int(db.kv_get(f"regime_i:{cid}", "0") or 0)
-    lst = REGIMES.get(cid, _GENERIC)
-    ni = (i + 1) % len(lst)
-    db.kv_set(f"regime_i:{cid}", str(ni))
-    new_regime = lst[ni] or "وضع موجود"
-    was_colony = geo.colony_of(cid)
-    geo.free_colony(cid)
-    c = __import__("countries").COUNTRIES[cid]
-    _war.PENDING_BBC.append("\n".join([
-        "📡 <b>خبر فوری — BBC دارک‌زون</b> 🌍",
-        f"Breaking: شورش مردمی در {c['flag']} {c['name']} پیروز شد!",
-        f"🏷 حکومت تازه: <b>{new_regime}</b>"
-        + (f" — آزاد شد از یوغ "
-           f"{__import__('countries').COUNTRIES[was_colony]['name']}!" if was_colony else ""),
-        "🔥 ملت، تاریخ ساخت!"]))
-    return "\n".join([
-        texts.hdr("پیروزی شورش", "🏆"),
-        f"🔥 شورش مردمی {c['flag']} {c['name']} پیروز شد!",
-        f"🏷 رژیم تازه: <b>{new_regime}</b>",
-        "⛓ یوغ دست‌نشانده شکست!" if was_colony else "",
-        "📣 خبر در گروه پخش شد."])
+@db.atomic
+def revolt_support(uid):
+    from game import notifications,geo
+    p=state.active(uid)
+    if not p:return '⛔ اول «شروع»'
+    cid=p['country'];rv=_revolt(cid)
+    if not rv:return '🔥 شورشی فعال نیست.'
+    members={r['uid'] for r in db.q('SELECT uid FROM users WHERE country=?',(cid,))}
+    supporters=set(rv.get('sup',[])) & members
+    supporters.add(uid)
+    rv['sup']=sorted(supporters)
+    import json
+    db.kv_set(f'revolt:{cid}',json.dumps(rv))
+    need=max(1,(len(members)+1)//2)
+    if len(supporters)<need or db.now()-rv['ts']<6*3600:
+        return revolt_view(uid)+'\n⏳ علاوه بر اکثریت واقعی، ۶ ساعت سازمان‌دهی لازم است.'
+    db.kv_del(f'revolt:{cid}')
+    i=db.integer(db.kv_get(f'regime_i:{cid}'));lst=REGIMES.get(cid,_GENERIC)
+    ni=(i+1)%len(lst);db.kv_set(f'regime_i:{cid}',ni)
+    msg=f"🏛 حکومت {countries.COUNTRIES[cid]['name']} با رأی بازیکنان و پس از سازمان‌دهی تغییر کرد: {lst[ni] or 'وضع موجود'}."
+    if geo.colony_of(cid):msg+='\nاشغال نظامی هنوز برقرار است؛ تغییر حکومت جای بازپس‌گیری شهرها را نمی‌گیرد.'
+    notifications.emit(msg,cids=[cid],uids=[uid])
+    return msg
